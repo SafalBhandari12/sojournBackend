@@ -70,13 +70,6 @@ router.post("/refresh-token", authController.refreshToken);
 router.get("/profile", authMiddleware, authController.getProfile);
 
 /**
- * @route PUT /api/auth/profile
- * @desc Update user profile
- * @access Private
- */
-router.put("/profile", authMiddleware, authController.updateProfile);
-
-/**
  * @route POST /api/auth/logout
  * @desc Logout user (invalidate session)
  * @access Private
@@ -179,6 +172,66 @@ router.put(
   authMiddleware,
   authorizeAdmin,
   authController.suspendVendor
+);
+
+/**
+ * @route PUT /api/auth/admin/user/:userId/assign-admin
+ * @desc Assign admin role to a user
+ * @access Private (Admin only)
+ */
+router.put(
+  "/admin/user/:userId/assign-admin",
+  authMiddleware,
+  authorizeAdmin,
+  authController.assignAdminRole
+);
+
+/**
+ * @route PUT /api/auth/admin/user/:userId/revoke-admin
+ * @desc Revoke admin role from a user
+ * @access Private (Admin only)
+ */
+router.put(
+  "/admin/user/:userId/revoke-admin",
+  authMiddleware,
+  authorizeAdmin,
+  authController.revokeAdminRole
+);
+
+/**
+ * @route GET /api/auth/admin/users
+ * @desc Get all users for admin review
+ * @access Private (Admin only)
+ */
+router.get(
+  "/admin/users",
+  authMiddleware,
+  authorizeAdmin,
+  authController.getAllUsers
+);
+
+/**
+ * @route PUT /api/auth/admin/user/:userId/toggle-status
+ * @desc Activate or deactivate a user account
+ * @access Private (Admin only)
+ */
+router.put(
+  "/admin/user/:userId/toggle-status",
+  authMiddleware,
+  authorizeAdmin,
+  authController.toggleUserStatus
+);
+
+/**
+ * @route PUT /api/auth/admin/profile
+ * @desc Update admin profile information
+ * @access Private (Admin only)
+ */
+router.put(
+  "/admin/profile",
+  authMiddleware,
+  authorizeAdmin,
+  authController.updateAdminProfile
 );
 
 export default router;

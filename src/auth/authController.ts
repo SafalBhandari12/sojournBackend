@@ -89,14 +89,34 @@ const vendorRegistrationSchema = z.object({
     .optional(),
 });
 
-// Profile update schema
-const profileUpdateSchema = z.object({
-  role: z.enum(["CUSTOMER", "VENDOR", "ADMIN"]).optional(),
-});
-
 // Refresh token schema
 const refreshTokenSchema = z.object({
   refreshToken: z.string().min(1, "Refresh token is required"),
+});
+
+// Admin assignment schema
+const adminAssignmentSchema = z.object({
+  fullName: z
+    .string()
+    .min(2, "Full name must be at least 2 characters")
+    .optional(),
+  email: z.string().email("Invalid email format").optional(),
+  permissions: z.array(z.string()).optional(),
+});
+
+// User status toggle schema
+const toggleStatusSchema = z.object({
+  isActive: z.boolean(),
+});
+
+// Admin profile update schema
+const adminProfileUpdateSchema = z.object({
+  fullName: z
+    .string()
+    .min(2, "Full name must be at least 2 characters")
+    .optional(),
+  email: z.string().email("Invalid email format").optional(),
+  permissions: z.array(z.string()).optional(),
 });
 
 class AuthController {
@@ -479,74 +499,6 @@ class AuthController {
   };
 
   /**
-   * Update user profile
-   */
-  updateProfile = async (req: AuthRequest, res: Response) => {
-    try {
-      if (!req.user) {
-        return res.status(401).json({
-          success: false,
-          message: "User not authenticated",
-        });
-      }
-
-      // Validate request body using Zod safeParse
-      const validationResult = profileUpdateSchema.safeParse(req.body);
-
-      if (!validationResult.success) {
-        return res.status(400).json({
-          success: false,
-          message: "Validation failed",
-          errors: validationResult.error.issues.map((issue) => ({
-            path: issue.path.join("."),
-            message: issue.message,
-          })),
-        });
-      }
-
-      const validatedData = validationResult.data;
-
-      // Filter out undefined values for strict TypeScript
-      const updates: any = {};
-      if (validatedData.role !== undefined) {
-        updates.role = validatedData.role;
-      }
-
-      if (Object.keys(updates).length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: "No valid updates provided",
-        });
-      }
-
-      const user = await prisma.user.update({
-        where: { id: req.user.userId },
-        data: updates,
-        select: {
-          id: true,
-          phoneNumber: true,
-          role: true,
-          isActive: true,
-          createdAt: true,
-          updatedAt: true,
-        },
-      });
-
-      return res.status(200).json({
-        success: true,
-        message: "Profile updated successfully",
-        data: user,
-      });
-    } catch (error) {
-      console.error("Update Profile Error:", error);
-      return res.status(500).json({
-        success: false,
-        message: "Internal server error",
-      });
-    }
-  };
-
-  /**
    * Logout user (invalidate session)
    */
   logout = async (req: AuthRequest, res: Response) => {
@@ -654,16 +606,18 @@ class AuthController {
         },
       });
 
-      // Update user role to VENDOR
-      await prisma.user.update({
-        where: { id: req.user.userId },
-        data: { role: "VENDOR" },
-      });
+      // NOTE: User role remains "CUSTOMER" until vendor application is approved by admin
+      // Role will be changed to "VENDOR" only when admin approves the vendor application
+      // This prevents unauthorized role escalation
 
       return res.status(201).json({
         success: true,
-        message: "Vendor registration submitted successfully",
-        data: vendor,
+        message:
+          "Vendor registration submitted successfully. Pending admin approval.",
+        data: {
+          ...vendor,
+          note: "Your application is pending approval. You will remain a customer until approved.",
+        },
       });
     } catch (error) {
       console.error("Register Vendor Error:", error);
@@ -871,11 +825,20 @@ class AuthController {
           status: "APPROVED",
           ...(commissionRate && { commissionRate: parseFloat(commissionRate) }),
         },
+        include: {
+          user: true,
+        },
+      });
+
+      // SECURITY: Only when admin approves, change user role to VENDOR
+      await prisma.user.update({
+        where: { id: vendor.userId },
+        data: { role: "VENDOR" },
       });
 
       return res.status(200).json({
         success: true,
-        message: "Vendor approved successfully",
+        message: "Vendor approved successfully. User role updated to VENDOR.",
         data: vendor,
       });
     } catch (error) {
@@ -911,11 +874,21 @@ class AuthController {
       const vendor = await prisma.vendor.update({
         where: { id: vendorId },
         data: { status: "REJECTED" },
+        include: {
+          user: true,
+        },
+      });
+
+      // SECURITY: When vendor is rejected, revert user role back to CUSTOMER
+      await prisma.user.update({
+        where: { id: vendor.userId },
+        data: { role: "CUSTOMER" },
       });
 
       return res.status(200).json({
         success: true,
-        message: "Vendor rejected successfully",
+        message:
+          "Vendor rejected successfully. User role reverted to CUSTOMER.",
         data: vendor,
       });
     } catch (error) {
@@ -951,11 +924,21 @@ class AuthController {
       const vendor = await prisma.vendor.update({
         where: { id: vendorId },
         data: { status: "SUSPENDED" },
+        include: {
+          user: true,
+        },
+      });
+
+      // SECURITY: When vendor is suspended, revert user role back to CUSTOMER
+      await prisma.user.update({
+        where: { id: vendor.userId },
+        data: { role: "CUSTOMER" },
       });
 
       return res.status(200).json({
         success: true,
-        message: "Vendor suspended successfully",
+        message:
+          "Vendor suspended successfully. User role reverted to CUSTOMER.",
         data: vendor,
       });
     } catch (error) {
@@ -967,9 +950,401 @@ class AuthController {
     }
   };
 
-  // ================================
-  // UTILITY FUNCTIONS
-  // ================================
+  /**
+   * Assign admin role to a user (Only existing admins can do this)
+   */
+  assignAdminRole = async (req: AuthRequest, res: Response) => {
+    try {
+      if (!req.user || req.user.role !== "ADMIN") {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. Admin role required.",
+        });
+      }
+
+      const { userId } = req.params;
+      const validationResult = adminAssignmentSchema.safeParse(req.body);
+
+      if (!validationResult.success) {
+        return res.status(400).json({
+          success: false,
+          message: "Validation failed",
+          errors: validationResult.error.issues.map((issue) => ({
+            path: issue.path.join("."),
+            message: issue.message,
+          })),
+        });
+      }
+
+      const { fullName, email, permissions } = validationResult.data;
+
+      if (!userId) {
+        return res.status(400).json({
+          success: false,
+          message: "User ID is required",
+        });
+      }
+
+      // Check if target user exists
+      const targetUser = await prisma.user.findUnique({
+        where: { id: userId },
+      });
+
+      if (!targetUser) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      if (targetUser.role === "ADMIN") {
+        return res.status(400).json({
+          success: false,
+          message: "User is already an admin",
+        });
+      }
+
+      // Update user role to ADMIN
+      const updatedUser = await prisma.user.update({
+        where: { id: userId },
+        data: { role: "ADMIN" },
+        select: {
+          id: true,
+          phoneNumber: true,
+          role: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+      // Create admin profile
+      const adminProfile = await this.createAdminProfile(
+        userId,
+        fullName || "Admin User",
+        email || undefined,
+        permissions || ["MANAGE_VENDORS", "MANAGE_USERS"]
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Admin role assigned successfully",
+        data: {
+          user: updatedUser,
+          adminProfile,
+        },
+      });
+    } catch (error) {
+      console.error("Assign Admin Role Error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  };
+
+  /**
+   * Revoke admin role from a user (Only existing admins can do this)
+   */
+  revokeAdminRole = async (req: AuthRequest, res: Response) => {
+    try {
+      if (!req.user || req.user.role !== "ADMIN") {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. Admin role required.",
+        });
+      }
+
+      const { userId } = req.params;
+
+      if (!userId) {
+        return res.status(400).json({
+          success: false,
+          message: "User ID is required",
+        });
+      }
+
+      // Prevent self-demotion
+      if (userId === req.user.userId) {
+        return res.status(400).json({
+          success: false,
+          message: "Cannot revoke your own admin role",
+        });
+      }
+
+      // Check if target user exists
+      const targetUser = await prisma.user.findUnique({
+        where: { id: userId },
+      });
+
+      if (!targetUser) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      if (targetUser.role !== "ADMIN") {
+        return res.status(400).json({
+          success: false,
+          message: "User is not an admin",
+        });
+      }
+
+      // Delete admin profile
+      await prisma.admin.delete({
+        where: { userId },
+      });
+
+      // Update user role back to CUSTOMER
+      const updatedUser = await prisma.user.update({
+        where: { id: userId },
+        data: { role: "CUSTOMER" },
+        select: {
+          id: true,
+          phoneNumber: true,
+          role: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: "Admin role revoked successfully. User role set to CUSTOMER.",
+        data: updatedUser,
+      });
+    } catch (error) {
+      console.error("Revoke Admin Role Error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  };
+
+  /**
+   * Create admin profile when assigning admin role
+   */
+  private createAdminProfile = async (
+    userId: string,
+    fullName?: string,
+    email?: string,
+    permissions: string[] = ["MANAGE_VENDORS", "MANAGE_USERS"]
+  ) => {
+    return await prisma.admin.create({
+      data: {
+        userId,
+        fullName: fullName || "Admin User",
+        email: email || null,
+        permissions,
+      },
+    });
+  };
+
+  /**
+   * Get all users for admin review
+   */
+  getAllUsers = async (req: AuthRequest, res: Response) => {
+    try {
+      if (!req.user || req.user.role !== "ADMIN") {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. Admin role required.",
+        });
+      }
+
+      const { role, isActive, page = 1, limit = 10 } = req.query;
+      const skip = (Number(page) - 1) * Number(limit);
+
+      const where: any = {};
+      if (role) where.role = role;
+      if (isActive !== undefined) where.isActive = isActive === "true";
+
+      const users = await prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          phoneNumber: true,
+          role: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+          vendorProfile: {
+            select: {
+              businessName: true,
+              status: true,
+              vendorType: true,
+            },
+          },
+          adminProfile: {
+            select: {
+              fullName: true,
+              email: true,
+            },
+          },
+        },
+        skip: skip,
+        take: Number(limit),
+        orderBy: { createdAt: "desc" },
+      });
+
+      const total = await prisma.user.count({ where });
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          users,
+          pagination: {
+            total,
+            page: Number(page),
+            pages: Math.ceil(total / Number(limit)),
+          },
+        },
+      });
+    } catch (error) {
+      console.error("Get All Users Error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  };
+
+  /**
+   * Activate/Deactivate user account
+   */
+  toggleUserStatus = async (req: AuthRequest, res: Response) => {
+    try {
+      if (!req.user || req.user.role !== "ADMIN") {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. Admin role required.",
+        });
+      }
+
+      const { userId } = req.params;
+      const validationResult = toggleStatusSchema.safeParse(req.body);
+
+      if (!validationResult.success) {
+        return res.status(400).json({
+          success: false,
+          message: "Validation failed",
+          errors: validationResult.error.issues.map((issue) => ({
+            path: issue.path.join("."),
+            message: issue.message,
+          })),
+        });
+      }
+
+      const { isActive } = validationResult.data;
+
+      if (!userId) {
+        return res.status(400).json({
+          success: false,
+          message: "User ID is required",
+        });
+      }
+
+      // Prevent self-deactivation
+      if (userId === req.user.userId && !isActive) {
+        return res.status(400).json({
+          success: false,
+          message: "Cannot deactivate your own account",
+        });
+      }
+
+      const updatedUser = await prisma.user.update({
+        where: { id: userId },
+        data: { isActive },
+        select: {
+          id: true,
+          phoneNumber: true,
+          role: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: `User ${isActive ? "activated" : "deactivated"} successfully`,
+        data: updatedUser,
+      });
+    } catch (error) {
+      console.error("Toggle User Status Error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  };
+
+  /**
+   * Update admin profile information
+   */
+  updateAdminProfile = async (req: AuthRequest, res: Response) => {
+    try {
+      if (!req.user || req.user.role !== "ADMIN") {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. Admin role required.",
+        });
+      }
+
+      const validationResult = adminProfileUpdateSchema.safeParse(req.body);
+
+      if (!validationResult.success) {
+        return res.status(400).json({
+          success: false,
+          message: "Validation failed",
+          errors: validationResult.error.issues.map((issue) => ({
+            path: issue.path.join("."),
+            message: issue.message,
+          })),
+        });
+      }
+
+      const { fullName, email, permissions } = validationResult.data;
+
+      // Find admin profile
+      const adminProfile = await prisma.admin.findUnique({
+        where: { userId: req.user.userId },
+      });
+
+      if (!adminProfile) {
+        return res.status(404).json({
+          success: false,
+          message: "Admin profile not found",
+        });
+      }
+
+      const updates: any = {};
+      if (fullName) updates.fullName = fullName;
+      if (email !== undefined) updates.email = email;
+      if (permissions && Array.isArray(permissions))
+        updates.permissions = permissions;
+
+      const updatedAdmin = await prisma.admin.update({
+        where: { id: adminProfile.id },
+        data: updates,
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: "Admin profile updated successfully",
+        data: updatedAdmin,
+      });
+    } catch (error) {
+      console.error("Update Admin Profile Error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  };
 
   /**
    * Check if phone number exists
