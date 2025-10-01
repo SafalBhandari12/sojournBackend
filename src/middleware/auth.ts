@@ -17,7 +17,7 @@ interface AuthRequest extends Request {
 }
 
 /**
- * Authentication middleware - Requires valid JWT token
+ * Authentication middleware - Requires valid ACCESS JWT token
  */
 export const authMiddleware = async (
   req: AuthRequest,
@@ -39,6 +39,14 @@ export const authMiddleware = async (
         token,
         process.env.JWT_SECRET || "your-secret-key"
       ) as any;
+
+      // Ensure this is an access token, not a refresh token
+      if (decoded.type !== "access") {
+        return res.status(401).json({
+          success: false,
+          message: "Invalid token type. Access token required.",
+        });
+      }
 
       // Get user from database to ensure they still exist and are active
       const user = await prisma.user.findUnique({

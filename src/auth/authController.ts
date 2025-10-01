@@ -1,123 +1,31 @@
 import { PrismaClient } from "@prisma/client";
 import jwt from "jsonwebtoken";
-import fetch from "node-fetch";
 import type { Request, Response } from "express";
 import type { AuthRequest } from "../middleware/auth.js";
-import { z } from "zod";
+import {
+  sendOTPSchema,
+  verifyOTPSchema,
+  resendOTPSchema,
+  vendorRegistrationSchema,
+  adminAssignmentSchema,
+  toggleStatusSchema,
+  adminProfileUpdateSchema,
+  validateRequest,
+} from "./validator.js";
+import {
+  getOTPConfig,
+  sendOTPToMessageCentral,
+  validateOTPWithMessageCentral,
+  createOTPRecord,
+  findOrCreateUser,
+  hasActiveOTP,
+  markPreviousOTPsAsUsed,
+  findOTPRecord,
+  markOTPAsVerified,
+  incrementOTPAttempts,
+} from "./otpUtils.js";
 
 const prisma = new PrismaClient();
-
-// ================================
-// ZOD VALIDATION SCHEMAS
-// ================================
-
-// Phone number schema
-const phoneNumberSchema = z
-  .string()
-  .regex(/^\d{10}$/, "Phone number must be exactly 10 digits");
-
-// OTP code schema
-const otpCodeSchema = z
-  .string()
-  .regex(/^\d{4,6}$/, "OTP code must be 4-6 digits");
-
-// Send OTP validation schema
-const sendOTPSchema = z.object({
-  phoneNumber: phoneNumberSchema,
-});
-
-// Verify OTP validation schema
-const verifyOTPSchema = z.object({
-  phoneNumber: phoneNumberSchema,
-  verificationId: z.string().min(1, "Verification ID is required"),
-  code: otpCodeSchema,
-});
-
-// Resend OTP validation schema
-const resendOTPSchema = z.object({
-  phoneNumber: phoneNumberSchema,
-});
-
-// Vendor registration schema
-const vendorRegistrationSchema = z.object({
-  businessName: z
-    .string()
-    .min(2, "Business name must be at least 2 characters"),
-  ownerName: z.string().min(2, "Owner name must be at least 2 characters"),
-  contactNumbers: z
-    .array(phoneNumberSchema)
-    .min(1, "At least one contact number is required"),
-  email: z.string().email("Invalid email format").optional(),
-  businessAddress: z
-    .string()
-    .min(10, "Business address must be at least 10 characters"),
-  googleMapsLink: z.string().url("Invalid Google Maps link").optional(),
-  gstNumber: z
-    .string()
-    .regex(
-      /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/,
-      "Invalid GST number format"
-    )
-    .optional(),
-  panNumber: z
-    .string()
-    .regex(/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/, "Invalid PAN number format")
-    .optional(),
-  aadhaarNumber: z
-    .string()
-    .regex(/^\d{12}$/, "Aadhaar number must be 12 digits")
-    .optional(),
-  vendorType: z.enum([
-    "HOTEL",
-    "ADVENTURE",
-    "TRANSPORT",
-    "LOCAL_MARKET",
-    "OTHER",
-  ]),
-  bankDetails: z
-    .object({
-      accountNumber: z
-        .string()
-        .min(8, "Account number must be at least 8 digits"),
-      ifscCode: z
-        .string()
-        .regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, "Invalid IFSC code format"),
-      bankName: z.string().min(2, "Bank name is required"),
-      branchName: z.string().min(2, "Branch name is required"),
-      accountHolder: z.string().min(2, "Account holder name is required"),
-    })
-    .optional(),
-});
-
-// Refresh token schema
-const refreshTokenSchema = z.object({
-  refreshToken: z.string().min(1, "Refresh token is required"),
-});
-
-// Admin assignment schema
-const adminAssignmentSchema = z.object({
-  fullName: z
-    .string()
-    .min(2, "Full name must be at least 2 characters")
-    .optional(),
-  email: z.string().email("Invalid email format").optional(),
-  permissions: z.array(z.string()).optional(),
-});
-
-// User status toggle schema
-const toggleStatusSchema = z.object({
-  isActive: z.boolean(),
-});
-
-// Admin profile update schema
-const adminProfileUpdateSchema = z.object({
-  fullName: z
-    .string()
-    .min(2, "Full name must be at least 2 characters")
-    .optional(),
-  email: z.string().email("Invalid email format").optional(),
-  permissions: z.array(z.string()).optional(),
-});
 
 class AuthController {
   // ================================
@@ -127,35 +35,23 @@ class AuthController {
   /**
    * Send OTP to phone number using MessageCentral
    */
-  sendOTP = async (req: Request, res: Response) => {
+  static async sendOTP(req: Request, res: Response) {
     try {
-      // Validate request body using Zod safeParse
-      const validationResult = sendOTPSchema.safeParse(req.body);
+      // Validate request body using helper function
+      const validation = validateRequest(sendOTPSchema, req.body);
 
-      if (!validationResult.success) {
+      if (!validation.success) {
         return res.status(400).json({
           success: false,
           message: "Validation failed",
-          errors: validationResult.error.issues.map((issue) => ({
-            path: issue.path.join("."),
-            message: issue.message,
-          })),
+          errors: validation.errors,
         });
       }
 
-      const { phoneNumber } = validationResult.data;
+      const { phoneNumber } = validation.data!;
 
       // Check if there's a recent active OTP
-      const existingOTP = await prisma.oTP.findFirst({
-        where: {
-          phoneNumber,
-          isUsed: false,
-          expiresAt: { gt: new Date() },
-        },
-        orderBy: { createdAt: "desc" },
-      });
-
-      if (existingOTP) {
+      if (await hasActiveOTP(phoneNumber)) {
         return res.status(429).json({
           success: false,
           message: "OTP already sent. Please wait before requesting again.",
@@ -163,9 +59,7 @@ class AuthController {
       }
 
       // Get OTP service configuration
-      const config = await prisma.oTPServiceConfig.findFirst({
-        where: { isActive: true },
-      });
+      const config = await getOTPConfig();
 
       if (!config) {
         return res.status(500).json({
@@ -174,45 +68,20 @@ class AuthController {
         });
       }
 
-      // Call MessageCentral Send OTP API
-      const otpResponse = await fetch(
-        `${config.baseUrl}/verification/v3/send?countryCode=${config.countryCode}&customerId=${config.customerId}&flowType=${config.flowType}&mobileNumber=${phoneNumber}`,
-        {
-          method: "POST",
-          headers: {
-            authToken: config.authToken,
-          },
-        }
-      );
+      // Send OTP using MessageCentral API
+      const otpResult = await sendOTPToMessageCentral(phoneNumber, config);
 
-      const otpResult = (await otpResponse.json()) as any;
-
-      if (otpResult.responseCode === 200) {
+      if (otpResult.success && otpResult.data) {
         // Find or create user
-        let user = await prisma.user.findUnique({
-          where: { phoneNumber },
-        });
-
-        if (!user) {
-          user = await prisma.user.create({
-            data: {
-              phoneNumber,
-              role: "CUSTOMER",
-            },
-          });
-        }
+        const user = await findOrCreateUser(phoneNumber);
 
         // Store OTP record
-        await prisma.oTP.create({
-          data: {
-            userId: user.id,
-            phoneNumber: otpResult.data.mobileNumber,
-            verificationId: otpResult.data.verificationId,
-            expiresAt: new Date(
-              Date.now() + parseInt(otpResult.data.timeout) * 1000
-            ),
-          },
-        });
+        await createOTPRecord(
+          user.id,
+          otpResult.data.mobileNumber,
+          otpResult.data.verificationId,
+          otpResult.data.timeout
+        );
 
         return res.status(200).json({
           success: true,
@@ -226,7 +95,7 @@ class AuthController {
         return res.status(400).json({
           success: false,
           message: "Failed to send OTP",
-          error: otpResult.message,
+          error: otpResult.error,
         });
       }
     } catch (error) {
@@ -236,38 +105,28 @@ class AuthController {
         message: "Internal server error",
       });
     }
-  };
+  }
 
   /**
    * Verify OTP and login/register user
    */
-  verifyOTP = async (req: Request, res: Response) => {
+  static async verifyOTP(req: Request, res: Response) {
     try {
-      // Validate request body using Zod safeParse
-      const validationResult = verifyOTPSchema.safeParse(req.body);
+      // Validate request body using helper function
+      const validation = validateRequest(verifyOTPSchema, req.body);
 
-      if (!validationResult.success) {
+      if (!validation.success) {
         return res.status(400).json({
           success: false,
           message: "Validation failed",
-          errors: validationResult.error.issues.map((issue) => ({
-            path: issue.path.join("."),
-            message: issue.message,
-          })),
+          errors: validation.errors,
         });
       }
 
-      const { verificationId, code, phoneNumber } = validationResult.data;
+      const { verificationId, code, phoneNumber } = validation.data!;
 
       // Find OTP record
-      const otpRecord = await prisma.oTP.findFirst({
-        where: {
-          verificationId: verificationId.toString(),
-          phoneNumber,
-          isUsed: false,
-        },
-        include: { user: true },
-      });
+      const otpRecord = await findOTPRecord(verificationId, phoneNumber);
 
       if (!otpRecord) {
         return res.status(404).json({
@@ -293,9 +152,7 @@ class AuthController {
       }
 
       // Get OTP service configuration
-      const config = await prisma.oTPServiceConfig.findFirst({
-        where: { isActive: true },
-      });
+      const config = await getOTPConfig();
 
       if (!config) {
         return res.status(500).json({
@@ -304,45 +161,47 @@ class AuthController {
         });
       }
 
-      // Call MessageCentral Validate OTP API
-      const validateResponse = await fetch(
-        `${config.baseUrl}/verification/v3/validateOtp?countryCode=${config.countryCode}&mobileNumber=${phoneNumber}&verificationId=${verificationId}&customerId=${config.customerId}&code=${code}`,
-        {
-          method: "GET",
-          headers: {
-            authToken: config.authToken,
-          },
-        }
+      // Validate OTP using MessageCentral API
+      const validateResult = await validateOTPWithMessageCentral(
+        phoneNumber,
+        verificationId,
+        code,
+        config
       );
 
-      const validateResult = (await validateResponse.json()) as any;
-
-      if (
-        validateResult.responseCode === 200 &&
-        validateResult.data.verificationStatus === "VERIFICATION_COMPLETED"
-      ) {
+      if (validateResult.success) {
         // Mark OTP as verified
-        await prisma.oTP.update({
-          where: { id: otpRecord.id },
-          data: {
-            isVerified: true,
-            isUsed: true,
-            verifiedAt: new Date(),
-          },
-        });
+        await markOTPAsVerified(otpRecord.id);
 
-        // Generate JWT token
-        const token = jwt.sign(
-          { userId: otpRecord.user.id, role: otpRecord.user.role },
+        // Generate JWT tokens with proper types
+        const accessToken = jwt.sign(
+          {
+            userId: otpRecord.user.id,
+            role: otpRecord.user.role,
+            type: "access", // Mark as access token
+          },
           process.env.JWT_SECRET || "your-secret-key",
-          { expiresIn: "7d" }
+          { expiresIn: "15m" } // Short-lived access token (15 minutes)
+        );
+
+        const refreshToken = jwt.sign(
+          {
+            userId: otpRecord.user.id,
+            role: otpRecord.user.role,
+            type: "refresh", // Mark as refresh token
+            refreshCount: 0, // Initial refresh count
+            originalIat: Math.floor(Date.now() / 1000), // Store original issue time
+          },
+          process.env.JWT_SECRET || "your-secret-key",
+          { expiresIn: "30d" } // Maximum lifetime (30 days)
         );
 
         return res.status(200).json({
           success: true,
           message: "OTP verified successfully",
           data: {
-            token,
+            accessToken,
+            refreshToken,
             user: {
               id: otpRecord.user.id,
               phoneNumber: otpRecord.user.phoneNumber,
@@ -353,12 +212,7 @@ class AuthController {
         });
       } else {
         // Increment attempt count
-        await prisma.oTP.update({
-          where: { id: otpRecord.id },
-          data: {
-            attempts: { increment: 1 },
-          },
-        });
+        await incrementOTPAttempts(otpRecord.id);
 
         return res.status(400).json({
           success: false,
@@ -373,40 +227,86 @@ class AuthController {
         message: "Internal server error",
       });
     }
-  };
+  }
 
   /**
    * Resend OTP to phone number
    */
-  resendOTP = async (req: Request, res: Response) => {
+  static async resendOTP(req: Request, res: Response) {
     try {
-      // Validate request body using Zod safeParse
-      const validationResult = resendOTPSchema.safeParse(req.body);
+      // Validate request body using helper function
+      const validation = validateRequest(resendOTPSchema, req.body);
 
-      if (!validationResult.success) {
+      if (!validation.success) {
         return res.status(400).json({
           success: false,
           message: "Validation failed",
-          errors: validationResult.error.issues.map((issue) => ({
-            path: issue.path.join("."),
-            message: issue.message,
-          })),
+          errors: validation.errors,
         });
       }
 
-      const { phoneNumber } = validationResult.data;
+      const { phoneNumber } = validation.data!;
 
-      // Mark previous OTP as used
-      await prisma.oTP.updateMany({
-        where: {
-          phoneNumber,
-          isUsed: false,
-        },
-        data: { isUsed: true },
+      // Check if user exists (resend OTP should only work for existing users)
+      const existingUser = await prisma.user.findUnique({
+        where: { phoneNumber },
       });
 
-      // Send new OTP (reuse sendOTP logic)
-      return this.sendOTP(req, res);
+      if (!existingUser) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found. Please use send OTP first.",
+        });
+      }
+
+      // Check if there's a recent active OTP
+      if (!(await hasActiveOTP(phoneNumber))) {
+        return res.status(400).json({
+          success: false,
+          message: "No active OTP found to resend. Please request a new OTP.",
+        });
+      }
+
+      // Get OTP service configuration
+      const config = await getOTPConfig();
+
+      if (!config) {
+        return res.status(500).json({
+          success: false,
+          message: "OTP service not configured",
+        });
+      }
+
+      // Mark previous OTPs as used
+      await markPreviousOTPsAsUsed(phoneNumber);
+
+      // Send new OTP using MessageCentral API
+      const otpResult = await sendOTPToMessageCentral(phoneNumber, config);
+
+      if (otpResult.success && otpResult.data) {
+        // Store new OTP record for existing user
+        await createOTPRecord(
+          existingUser.id,
+          otpResult.data.mobileNumber,
+          otpResult.data.verificationId,
+          otpResult.data.timeout
+        );
+
+        return res.status(200).json({
+          success: true,
+          message: "OTP resent successfully",
+          data: {
+            verificationId: otpResult.data.verificationId,
+            timeout: otpResult.data.timeout,
+          },
+        });
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: "Failed to resend OTP",
+          error: otpResult.error,
+        });
+      }
     } catch (error) {
       console.error("Resend OTP Error:", error);
       return res.status(500).json({
@@ -414,7 +314,7 @@ class AuthController {
         message: "Internal server error",
       });
     }
-  };
+  }
 
   // ================================
   // USER PROFILE MANAGEMENT
@@ -423,7 +323,7 @@ class AuthController {
   /**
    * Get current user profile
    */
-  getProfile = async (req: AuthRequest, res: Response) => {
+  static async getProfile(req: AuthRequest, res: Response) {
     try {
       if (!req.user) {
         return res.status(401).json({
@@ -455,12 +355,12 @@ class AuthController {
         message: "Internal server error",
       });
     }
-  };
+  }
 
   /**
    * Get detailed user profile with role-specific data
    */
-  getDetailedProfile = async (req: AuthRequest, res: Response) => {
+  static async getDetailedProfile(req: AuthRequest, res: Response) {
     try {
       if (!req.user) {
         return res.status(401).json({
@@ -496,12 +396,12 @@ class AuthController {
         message: "Internal server error",
       });
     }
-  };
+  }
 
   /**
    * Logout user (invalidate session)
    */
-  logout = async (req: AuthRequest, res: Response) => {
+  static async logout(req: AuthRequest, res: Response) {
     try {
       // In a more complex setup, you'd maintain a blacklist of tokens
       // For now, we'll just send a success response
@@ -516,7 +416,7 @@ class AuthController {
         message: "Internal server error",
       });
     }
-  };
+  }
 
   // ================================
   // VENDOR MANAGEMENT
@@ -525,7 +425,7 @@ class AuthController {
   /**
    * Register as vendor
    */
-  registerVendor = async (req: AuthRequest, res: Response) => {
+  static async registerVendor(req: AuthRequest, res: Response) {
     try {
       if (!req.user) {
         return res.status(401).json({
@@ -534,17 +434,14 @@ class AuthController {
         });
       }
 
-      // Validate request body using Zod safeParse
-      const validationResult = vendorRegistrationSchema.safeParse(req.body);
+      // Validate request body using helper function
+      const validation = validateRequest(vendorRegistrationSchema, req.body);
 
-      if (!validationResult.success) {
+      if (!validation.success) {
         return res.status(400).json({
           success: false,
           message: "Validation failed",
-          errors: validationResult.error.issues.map((issue) => ({
-            path: issue.path.join("."),
-            message: issue.message,
-          })),
+          errors: validation.errors,
         });
       }
 
@@ -560,7 +457,7 @@ class AuthController {
         aadhaarNumber,
         vendorType,
         bankDetails,
-      } = validationResult.data;
+      } = validation.data!;
 
       // Check if user already has a vendor profile
       const existingVendor = await prisma.vendor.findUnique({
@@ -626,12 +523,12 @@ class AuthController {
         message: "Internal server error",
       });
     }
-  };
+  }
 
   /**
    * Get vendor status
    */
-  getVendorStatus = async (req: AuthRequest, res: Response) => {
+  static async getVendorStatus(req: AuthRequest, res: Response) {
     try {
       if (!req.user) {
         return res.status(401).json({
@@ -671,12 +568,12 @@ class AuthController {
         message: "Internal server error",
       });
     }
-  };
+  }
 
   /**
    * Update vendor profile
    */
-  updateVendorProfile = async (req: AuthRequest, res: Response) => {
+  static async updateVendorProfile(req: AuthRequest, res: Response) {
     try {
       if (!req.user) {
         return res.status(401).json({
@@ -733,7 +630,7 @@ class AuthController {
         message: "Internal server error",
       });
     }
-  };
+  }
 
   // ================================
   // ADMIN FUNCTIONS
@@ -742,7 +639,7 @@ class AuthController {
   /**
    * Get all vendors for admin review
    */
-  getVendorsForAdmin = async (req: AuthRequest, res: Response) => {
+  static async getVendorsForAdmin(req: AuthRequest, res: Response) {
     try {
       // Check if user is admin
       if (!req.user || req.user.role !== "ADMIN") {
@@ -795,12 +692,12 @@ class AuthController {
         message: "Internal server error",
       });
     }
-  };
+  }
 
   /**
    * Approve vendor
    */
-  approveVendor = async (req: AuthRequest, res: Response) => {
+  static async approveVendor(req: AuthRequest, res: Response) {
     try {
       if (!req.user || req.user.role !== "ADMIN") {
         return res.status(403).json({
@@ -848,12 +745,12 @@ class AuthController {
         message: "Internal server error",
       });
     }
-  };
+  }
 
   /**
    * Reject vendor
    */
-  rejectVendor = async (req: AuthRequest, res: Response) => {
+  static async rejectVendor(req: AuthRequest, res: Response) {
     try {
       if (!req.user || req.user.role !== "ADMIN") {
         return res.status(403).json({
@@ -898,12 +795,12 @@ class AuthController {
         message: "Internal server error",
       });
     }
-  };
+  }
 
   /**
    * Suspend vendor
    */
-  suspendVendor = async (req: AuthRequest, res: Response) => {
+  static async suspendVendor(req: AuthRequest, res: Response) {
     try {
       if (!req.user || req.user.role !== "ADMIN") {
         return res.status(403).json({
@@ -948,12 +845,12 @@ class AuthController {
         message: "Internal server error",
       });
     }
-  };
+  }
 
   /**
    * Assign admin role to a user (Only existing admins can do this)
    */
-  assignAdminRole = async (req: AuthRequest, res: Response) => {
+  static async assignAdminRole(req: AuthRequest, res: Response) {
     try {
       if (!req.user || req.user.role !== "ADMIN") {
         return res.status(403).json({
@@ -963,20 +860,17 @@ class AuthController {
       }
 
       const { userId } = req.params;
-      const validationResult = adminAssignmentSchema.safeParse(req.body);
+      const validation = validateRequest(adminAssignmentSchema, req.body);
 
-      if (!validationResult.success) {
+      if (!validation.success) {
         return res.status(400).json({
           success: false,
           message: "Validation failed",
-          errors: validationResult.error.issues.map((issue) => ({
-            path: issue.path.join("."),
-            message: issue.message,
-          })),
+          errors: validation.errors,
         });
       }
 
-      const { fullName, email, permissions } = validationResult.data;
+      const { fullName, email, permissions } = validation.data!;
 
       if (!userId) {
         return res.status(400).json({
@@ -1019,7 +913,7 @@ class AuthController {
       });
 
       // Create admin profile
-      const adminProfile = await this.createAdminProfile(
+      const adminProfile = await AuthController.createAdminProfile(
         userId,
         fullName || "Admin User",
         email || undefined,
@@ -1041,12 +935,12 @@ class AuthController {
         message: "Internal server error",
       });
     }
-  };
+  }
 
   /**
    * Revoke admin role from a user (Only existing admins can do this)
    */
-  revokeAdminRole = async (req: AuthRequest, res: Response) => {
+  static async revokeAdminRole(req: AuthRequest, res: Response) {
     try {
       if (!req.user || req.user.role !== "ADMIN") {
         return res.status(403).json({
@@ -1122,17 +1016,17 @@ class AuthController {
         message: "Internal server error",
       });
     }
-  };
+  }
 
   /**
    * Create admin profile when assigning admin role
    */
-  private createAdminProfile = async (
+  static async createAdminProfile(
     userId: string,
     fullName?: string,
     email?: string,
     permissions: string[] = ["MANAGE_VENDORS", "MANAGE_USERS"]
-  ) => {
+  ) {
     return await prisma.admin.create({
       data: {
         userId,
@@ -1141,12 +1035,12 @@ class AuthController {
         permissions,
       },
     });
-  };
+  }
 
   /**
    * Get all users for admin review
    */
-  getAllUsers = async (req: AuthRequest, res: Response) => {
+  static async getAllUsers(req: AuthRequest, res: Response) {
     try {
       if (!req.user || req.user.role !== "ADMIN") {
         return res.status(403).json({
@@ -1210,12 +1104,12 @@ class AuthController {
         message: "Internal server error",
       });
     }
-  };
+  }
 
   /**
    * Activate/Deactivate user account
    */
-  toggleUserStatus = async (req: AuthRequest, res: Response) => {
+  static async toggleUserStatus(req: AuthRequest, res: Response) {
     try {
       if (!req.user || req.user.role !== "ADMIN") {
         return res.status(403).json({
@@ -1225,20 +1119,17 @@ class AuthController {
       }
 
       const { userId } = req.params;
-      const validationResult = toggleStatusSchema.safeParse(req.body);
+      const validation = validateRequest(toggleStatusSchema, req.body);
 
-      if (!validationResult.success) {
+      if (!validation.success) {
         return res.status(400).json({
           success: false,
           message: "Validation failed",
-          errors: validationResult.error.issues.map((issue) => ({
-            path: issue.path.join("."),
-            message: issue.message,
-          })),
+          errors: validation.errors,
         });
       }
 
-      const { isActive } = validationResult.data;
+      const { isActive } = validation.data!;
 
       if (!userId) {
         return res.status(400).json({
@@ -1280,12 +1171,12 @@ class AuthController {
         message: "Internal server error",
       });
     }
-  };
+  }
 
   /**
    * Update admin profile information
    */
-  updateAdminProfile = async (req: AuthRequest, res: Response) => {
+  static async updateAdminProfile(req: AuthRequest, res: Response) {
     try {
       if (!req.user || req.user.role !== "ADMIN") {
         return res.status(403).json({
@@ -1294,20 +1185,17 @@ class AuthController {
         });
       }
 
-      const validationResult = adminProfileUpdateSchema.safeParse(req.body);
+      const validation = validateRequest(adminProfileUpdateSchema, req.body);
 
-      if (!validationResult.success) {
+      if (!validation.success) {
         return res.status(400).json({
           success: false,
           message: "Validation failed",
-          errors: validationResult.error.issues.map((issue) => ({
-            path: issue.path.join("."),
-            message: issue.message,
-          })),
+          errors: validation.errors,
         });
       }
 
-      const { fullName, email, permissions } = validationResult.data;
+      const { fullName, email, permissions } = validation.data!;
 
       // Find admin profile
       const adminProfile = await prisma.admin.findUnique({
@@ -1344,12 +1232,12 @@ class AuthController {
         message: "Internal server error",
       });
     }
-  };
+  }
 
   /**
    * Check if phone number exists
    */
-  checkPhoneExists = async (req: Request, res: Response) => {
+  static async checkPhoneExists(req: Request, res: Response) {
     try {
       const { phoneNumber } = req.params;
 
@@ -1379,34 +1267,79 @@ class AuthController {
         message: "Internal server error",
       });
     }
-  };
+  }
 
   /**
-   * Refresh authentication token
+   * Refresh authentication token with proper security measures
    */
-  refreshToken = async (req: Request, res: Response) => {
+  static async refreshToken(req: Request, res: Response) {
     try {
-      // Validate request body using Zod safeParse
-      const validationResult = refreshTokenSchema.safeParse(req.body);
+      // Extract refresh token from Authorization header
+      const authHeader = req.headers.authorization;
 
-      if (!validationResult.success) {
-        return res.status(400).json({
+      if (!authHeader) {
+        return res.status(401).json({
           success: false,
-          message: "Validation failed",
-          errors: validationResult.error.issues.map((issue) => ({
-            path: issue.path.join("."),
-            message: issue.message,
-          })),
+          message: "Authorization header is required",
         });
       }
 
-      const { refreshToken } = validationResult.data;
+      // Check if header starts with "Bearer "
+      if (!authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({
+          success: false,
+          message: "Authorization header must start with 'Bearer '",
+        });
+      }
+
+      // Extract the refresh token
+      const refreshToken = authHeader.substring(7); // Remove "Bearer " prefix
+
+      if (!refreshToken) {
+        return res.status(401).json({
+          success: false,
+          message: "Refresh token is required",
+        });
+      }
 
       try {
+        // Verify the refresh token
         const decoded = jwt.verify(
           refreshToken,
           process.env.JWT_SECRET || "your-secret-key"
         ) as any;
+
+        // Check if this is actually a refresh token (not an access token)
+        if (decoded.type !== "refresh") {
+          return res.status(401).json({
+            success: false,
+            message: "Invalid token type. Refresh token required.",
+          });
+        }
+
+        // Security: Check refresh count to prevent indefinite refresh
+        const refreshCount = decoded.refreshCount || 0;
+        const maxRefreshes = 20; // Maximum 20 refreshes before requiring re-login
+
+        if (refreshCount >= maxRefreshes) {
+          return res.status(401).json({
+            success: false,
+            message:
+              "Refresh token has reached maximum usage limit. Please login again.",
+          });
+        }
+
+        // Security: Check if original token is too old (30 days max)
+        const originalIssuedAt = decoded.originalIat || decoded.iat;
+        const maxTokenAge = 30 * 24 * 60 * 60; // 30 days in seconds
+        const currentTime = Math.floor(Date.now() / 1000);
+
+        if (currentTime - originalIssuedAt > maxTokenAge) {
+          return res.status(401).json({
+            success: false,
+            message: "Refresh token has expired. Please login again.",
+          });
+        }
 
         const user = await prisma.user.findUnique({
           where: { id: decoded.userId },
@@ -1415,24 +1348,56 @@ class AuthController {
         if (!user || !user.isActive) {
           return res.status(401).json({
             success: false,
-            message: "Invalid refresh token",
+            message: "Invalid refresh token or user inactive",
           });
         }
 
-        const newToken = jwt.sign(
-          { userId: user.id, role: user.role },
+        // Generate new access token (short-lived)
+        const newAccessToken = jwt.sign(
+          {
+            userId: user.id,
+            role: user.role,
+            type: "access", // Mark as access token
+          },
           process.env.JWT_SECRET || "your-secret-key",
-          { expiresIn: "7d" }
+          { expiresIn: "15m" } // Very short-lived access token (15 minutes)
+        );
+
+        // Generate new refresh token with incremented count and preserved original timestamp
+        const newRefreshToken = jwt.sign(
+          {
+            userId: user.id,
+            role: user.role,
+            type: "refresh", // Mark as refresh token
+            refreshCount: refreshCount + 1, // Increment refresh count
+            originalIat: originalIssuedAt, // Preserve original issue time
+          },
+          process.env.JWT_SECRET || "your-secret-key",
+          {
+            expiresIn: Math.floor(
+              maxTokenAge - (currentTime - originalIssuedAt)
+            ), // Remaining time until absolute expiration
+          }
         );
 
         return res.status(200).json({
           success: true,
-          data: { token: newToken },
+          message: "Tokens refreshed successfully",
+          data: {
+            accessToken: newAccessToken,
+            refreshToken: newRefreshToken, // Return new refresh token (token rotation)
+            user: {
+              id: user.id,
+              phoneNumber: user.phoneNumber,
+              role: user.role,
+              isActive: user.isActive,
+            },
+          },
         });
       } catch (jwtError) {
         return res.status(401).json({
           success: false,
-          message: "Invalid refresh token",
+          message: "Invalid or expired refresh token",
         });
       }
     } catch (error) {
@@ -1442,7 +1407,7 @@ class AuthController {
         message: "Internal server error",
       });
     }
-  };
+  }
 }
 
 export default AuthController;

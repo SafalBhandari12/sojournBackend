@@ -1,5 +1,5 @@
-const fetch = require("node-fetch");
-const { PrismaClient } = require("@prisma/client");
+import fetch from "node-fetch";
+import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
@@ -18,8 +18,8 @@ class OTPService {
           data: {
             serviceName: "MessageCentral",
             baseUrl: "https://cpaas.messagecentral.com",
-            customerId: process.env.CUSTOMER_ID,
-            authToken: process.env.AUTH_TOKEN,
+            customerId: process.env.CUSTOMER_ID || "",
+            authToken: process.env.AUTH_TOKEN || "",
             countryCode: "91",
             flowType: "SMS",
             defaultTimeout: 60,
@@ -66,7 +66,7 @@ class OTPService {
         }
       );
 
-      const result = await response.json();
+      const result = (await response.json()) as any;
 
       if (result.responseCode === 200) {
         return {
@@ -113,7 +113,7 @@ class OTPService {
         }
       );
 
-      const result = await response.json();
+      const result = (await response.json()) as any;
 
       if (
         result.responseCode === 200 &&
@@ -197,4 +197,4 @@ class OTPService {
   }
 }
 
-module.exports = { OTPService };
+export { OTPService };

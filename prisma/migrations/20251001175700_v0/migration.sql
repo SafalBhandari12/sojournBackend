@@ -43,11 +43,17 @@ CREATE TABLE "public"."users" (
 -- CreateTable
 CREATE TABLE "public"."otps" (
     "id" TEXT NOT NULL,
-    "code" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
+    "phoneNumber" TEXT NOT NULL,
+    "verificationId" TEXT NOT NULL,
+    "otpCode" TEXT,
     "expiresAt" TIMESTAMP(3) NOT NULL,
     "isUsed" BOOLEAN NOT NULL DEFAULT false,
+    "isVerified" BOOLEAN NOT NULL DEFAULT false,
+    "attempts" INTEGER NOT NULL DEFAULT 0,
+    "maxAttempts" INTEGER NOT NULL DEFAULT 3,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "verifiedAt" TIMESTAMP(3),
 
     CONSTRAINT "otps_pkey" PRIMARY KEY ("id")
 );
@@ -379,6 +385,24 @@ CREATE TABLE "public"."system_configs" (
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "system_configs_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "public"."otp_service_configs" (
+    "id" TEXT NOT NULL,
+    "serviceName" TEXT NOT NULL DEFAULT 'MessageCentral',
+    "baseUrl" TEXT NOT NULL DEFAULT 'https://cpaas.messagecentral.com',
+    "customerId" TEXT NOT NULL,
+    "authToken" TEXT NOT NULL,
+    "countryCode" TEXT NOT NULL DEFAULT '91',
+    "flowType" TEXT NOT NULL DEFAULT 'SMS',
+    "defaultTimeout" INTEGER NOT NULL DEFAULT 60,
+    "maxAttempts" INTEGER NOT NULL DEFAULT 3,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "otp_service_configs_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex

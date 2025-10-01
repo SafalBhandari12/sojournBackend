@@ -15,7 +15,6 @@ import {
 } from "../middleware/auth.js";
 
 const router = express.Router();
-const authController = new AuthController();
 
 // Apply general rate limiting to all routes
 router.use(generalRateLimit);
@@ -29,34 +28,35 @@ router.use(generalRateLimit);
  * @desc Send OTP to phone number for registration/login
  * @access Public
  */
-router.post("/send-otp", otpRateLimit, authController.sendOTP);
+router.post("/send-otp", otpRateLimit, AuthController.sendOTP);
 
 /**
  * @route POST /api/auth/verify-otp
  * @desc Verify OTP and login/register user
  * @access Public
  */
-router.post("/verify-otp", loginRateLimit, authController.verifyOTP);
+router.post("/verify-otp", loginRateLimit, AuthController.verifyOTP);
 
 /**
  * @route POST /api/auth/resend-otp
  * @desc Resend OTP to phone number
  * @access Public
  */
-router.post("/resend-otp", otpRateLimit, authController.resendOTP);
+router.post("/resend-otp", otpRateLimit, AuthController.resendOTP);
 /**
  * @route GET /api/auth/check-phone/:phoneNumber
  * @desc Check if phone number is already registered
  * @access Public
  */
-router.get("/check-phone/:phoneNumber", authController.checkPhoneExists);
+router.get("/check-phone/:phoneNumber", AuthController.checkPhoneExists);
 
 /**
  * @route POST /api/auth/refresh-token
  * @desc Refresh authentication token
- * @access Public (with valid refresh token)
+ * @access Public (with valid refresh token in Authorization header)
+ * @headers Authorization: Bearer <refresh_token>
  */
-router.post("/refresh-token", authController.refreshToken);
+router.post("/refresh-token", AuthController.refreshToken);
 
 // ================================
 // PROTECTED ROUTES (Requires Authentication)
@@ -67,21 +67,21 @@ router.post("/refresh-token", authController.refreshToken);
  * @desc Get current user profile
  * @access Private
  */
-router.get("/profile", authMiddleware, authController.getProfile);
+router.get("/profile", authMiddleware, AuthController.getProfile);
 
 /**
  * @route POST /api/auth/logout
  * @desc Logout user (invalidate session)
  * @access Private
  */
-router.post("/logout", authMiddleware, authController.logout);
+router.post("/logout", authMiddleware, AuthController.logout);
 
 /**
  * @route GET /api/auth/me
  * @desc Get detailed user information with role-specific data
  * @access Private
  */
-router.get("/me", authMiddleware, authController.getDetailedProfile);
+router.get("/me", authMiddleware, AuthController.getDetailedProfile);
 
 // ================================
 // VENDOR SPECIFIC ROUTES
@@ -96,7 +96,7 @@ router.post(
   "/vendor/register",
   authMiddleware,
   vendorRegistrationRateLimit,
-  authController.registerVendor
+  AuthController.registerVendor
 );
 /**
  * @route GET /api/auth/vendor/status
@@ -107,7 +107,7 @@ router.get(
   "/vendor/status",
   authMiddleware,
   authorize("VENDOR"),
-  authController.getVendorStatus
+  AuthController.getVendorStatus
 );
 
 /**
@@ -119,7 +119,7 @@ router.put(
   "/vendor/profile",
   authMiddleware,
   authorize("VENDOR"),
-  authController.updateVendorProfile
+  AuthController.updateVendorProfile
 );
 
 // ================================
@@ -135,7 +135,7 @@ router.get(
   "/admin/vendors",
   authMiddleware,
   authorizeAdmin,
-  authController.getVendorsForAdmin
+  AuthController.getVendorsForAdmin
 );
 
 /**
@@ -147,7 +147,7 @@ router.put(
   "/admin/vendor/:vendorId/approve",
   authMiddleware,
   authorizeAdmin,
-  authController.approveVendor
+  AuthController.approveVendor
 );
 
 /**
@@ -159,7 +159,7 @@ router.put(
   "/admin/vendor/:vendorId/reject",
   authMiddleware,
   authorizeAdmin,
-  authController.rejectVendor
+  AuthController.rejectVendor
 );
 
 /**
@@ -171,7 +171,7 @@ router.put(
   "/admin/vendor/:vendorId/suspend",
   authMiddleware,
   authorizeAdmin,
-  authController.suspendVendor
+  AuthController.suspendVendor
 );
 
 /**
@@ -183,7 +183,7 @@ router.put(
   "/admin/user/:userId/assign-admin",
   authMiddleware,
   authorizeAdmin,
-  authController.assignAdminRole
+  AuthController.assignAdminRole
 );
 
 /**
@@ -195,7 +195,7 @@ router.put(
   "/admin/user/:userId/revoke-admin",
   authMiddleware,
   authorizeAdmin,
-  authController.revokeAdminRole
+  AuthController.revokeAdminRole
 );
 
 /**
@@ -207,7 +207,7 @@ router.get(
   "/admin/users",
   authMiddleware,
   authorizeAdmin,
-  authController.getAllUsers
+  AuthController.getAllUsers
 );
 
 /**
@@ -219,7 +219,7 @@ router.put(
   "/admin/user/:userId/toggle-status",
   authMiddleware,
   authorizeAdmin,
-  authController.toggleUserStatus
+  AuthController.toggleUserStatus
 );
 
 /**
@@ -231,7 +231,7 @@ router.put(
   "/admin/profile",
   authMiddleware,
   authorizeAdmin,
-  authController.updateAdminProfile
+  AuthController.updateAdminProfile
 );
 
 export default router;

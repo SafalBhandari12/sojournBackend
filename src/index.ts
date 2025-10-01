@@ -7,6 +7,9 @@ import rateLimit from "express-rate-limit";
 // Import routes
 import authRoutes from "./auth/authRoutes.js";
 
+// Import services
+import { OTPService } from "./auth/otpService.js";
+
 // Load environment variables
 dotenv.config();
 
@@ -154,52 +157,90 @@ app.use(
 // START SERVER
 // ================================
 
+// Initialize services before starting server
+async function initializeServices() {
+  try {
+    console.log("Initializing services...");
+    await OTPService.initializeConfig();
+    console.log("Services initialized successfully");
+  } catch (error) {
+    console.error("Failed to initialize services:", error);
+    process.exit(1);
+  }
+}
+
 // Graceful shutdown handler
+let serverInstance: any = null;
+
 const gracefulShutdown = (signal: string) => {
   console.log(`Received ${signal}, shutting down gracefully...`);
 
-  server.close(() => {
-    console.log("HTTP server closed.");
-    process.exit(0);
-  });
+  if (serverInstance) {
+    serverInstance.close(() => {
+      console.log("HTTP server closed.");
+      process.exit(0);
+    });
 
-  // Force close after 10 seconds
-  setTimeout(() => {
-    console.error(
-      "Could not close connections in time, forcefully shutting down"
-    );
-    process.exit(1);
-  }, 10000);
+    // Force close after 10 seconds
+    setTimeout(() => {
+      console.error(
+        "Could not close connections in time, forcefully shutting down"
+      );
+      process.exit(1);
+    }, 10000);
+  } else {
+    process.exit(0);
+  }
 };
 
-// Start the server
-const server = app.listen(PORT, () => {
-  console.log(`
+// Start the server with initialization
+async function startServer() {
+  try {
+    // Initialize services first
+    await initializeServices();
+
+    // Start the server
+    serverInstance = app.listen(PORT, () => {
+      console.log(`
 Sojourn Multi-Vendor Platform API is running!
 Server: http://localhost:${PORT}
 Health: http://localhost:${PORT}/health  
 Environment: ${process.env.NODE_ENV || "development"}
 Started at: ${new Date().toISOString()}
-  `);
-});
+      `);
+    });
 
-// Handle graceful shutdown
-process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
-process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+    // Handle graceful shutdown
+    process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+    process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
-// Handle unhandled promise rejections
-process.on("unhandledRejection", (reason, promise) => {
-  console.error("Unhandled Rejection at:", promise, "reason:", reason);
-  // Close server & exit process
-  server.close(() => {
+    // Handle unhandled promise rejections
+    process.on("unhandledRejection", (reason, promise) => {
+      console.error("Unhandled Rejection at:", promise, "reason:", reason);
+      // Close server & exit process
+      if (serverInstance) {
+        serverInstance.close(() => {
+          process.exit(1);
+        });
+      } else {
+        process.exit(1);
+      }
+    });
+
+    // Handle uncaught exceptions
+    process.on("uncaughtException", (error) => {
+      console.error("Uncaught Exception:", error);
+      process.exit(1);
+    });
+
+    return serverInstance;
+  } catch (error) {
+    console.error("Failed to start server:", error);
     process.exit(1);
-  });
-});
+  }
+}
 
-// Handle uncaught exceptions
-process.on("uncaughtException", (error) => {
-  console.error("Uncaught Exception:", error);
-  process.exit(1);
-});
+// Start the application
+startServer();
 
 export default app;
