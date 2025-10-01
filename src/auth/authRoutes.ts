@@ -101,14 +101,9 @@ router.post(
 /**
  * @route GET /api/auth/vendor/status
  * @desc Get vendor application status
- * @access Private (Vendor only)
+ * @access Private (Any authenticated user can check their vendor status)
  */
-router.get(
-  "/vendor/status",
-  authMiddleware,
-  authorize("VENDOR"),
-  AuthController.getVendorStatus
-);
+router.get("/vendor/status", authMiddleware, AuthController.getVendorStatus);
 
 /**
  * @route PUT /api/auth/vendor/profile

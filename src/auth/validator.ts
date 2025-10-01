@@ -40,26 +40,23 @@ export const vendorRegistrationSchema = z.object({
   contactNumbers: z
     .array(phoneNumberSchema)
     .min(1, "At least one contact number is required"),
-  email: z.string().email("Invalid email format").optional(),
+  email: z.string().email("Invalid email format"),
   businessAddress: z
     .string()
     .min(10, "Business address must be at least 10 characters"),
-  googleMapsLink: z.string().url("Invalid Google Maps link").optional(),
+  googleMapsLink: z.string().url("Invalid Google Maps link"),
   gstNumber: z
     .string()
     .regex(
       /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/,
       "Invalid GST number format"
-    )
-    .optional(),
+    ),
   panNumber: z
     .string()
-    .regex(/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/, "Invalid PAN number format")
-    .optional(),
+    .regex(/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/, "Invalid PAN number format"),
   aadhaarNumber: z
     .string()
-    .regex(/^\d{12}$/, "Aadhaar number must be 12 digits")
-    .optional(),
+    .regex(/^\d{12}$/, "Aadhaar number must be 12 digits"),
   vendorType: z.enum([
     "HOTEL",
     "ADVENTURE",
@@ -67,19 +64,17 @@ export const vendorRegistrationSchema = z.object({
     "LOCAL_MARKET",
     "OTHER",
   ]),
-  bankDetails: z
-    .object({
-      accountNumber: z
-        .string()
-        .min(8, "Account number must be at least 8 digits"),
-      ifscCode: z
-        .string()
-        .regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, "Invalid IFSC code format"),
-      bankName: z.string().min(2, "Bank name is required"),
-      branchName: z.string().min(2, "Branch name is required"),
-      accountHolder: z.string().min(2, "Account holder name is required"),
-    })
-    .optional(),
+  bankDetails: z.object({
+    accountNumber: z
+      .string()
+      .min(8, "Account number must be at least 8 digits"),
+    ifscCode: z
+      .string()
+      .regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, "Invalid IFSC code format"),
+    bankName: z.string().min(2, "Bank name is required"),
+    branchName: z.string().min(2, "Branch name is required"),
+    accountHolder: z.string().min(2, "Account holder name is required"),
+  }),
 });
 
 // Admin assignment schema

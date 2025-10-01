@@ -478,19 +478,17 @@ class AuthController {
           businessName,
           ownerName,
           contactNumbers,
-          email: email || null,
+          email,
           businessAddress,
-          googleMapsLink: googleMapsLink || null,
-          gstNumber: gstNumber || null,
-          panNumber: panNumber || null,
-          aadhaarNumber: aadhaarNumber || null,
+          googleMapsLink,
+          gstNumber,
+          panNumber,
+          aadhaarNumber,
           vendorType,
           status: "PENDING",
-          ...(bankDetails && {
-            bankDetails: {
-              create: bankDetails,
-            },
-          }),
+          bankDetails: {
+            create: bankDetails,
+          },
         },
         include: {
           bankDetails: true,
@@ -545,9 +543,13 @@ class AuthController {
       });
 
       if (!vendor) {
-        return res.status(404).json({
-          success: false,
-          message: "Vendor profile not found",
+        return res.status(200).json({
+          success: true,
+          data: {
+            status: "NOT_APPLIED",
+            message:
+              "No vendor application found. You can apply to become a vendor.",
+          },
         });
       }
 
@@ -642,6 +644,8 @@ class AuthController {
   static async getVendorsForAdmin(req: AuthRequest, res: Response) {
     try {
       // Check if user is admin
+      console.log(req.user);
+      console.log("Safal");
       if (!req.user || req.user.role !== "ADMIN") {
         return res.status(403).json({
           success: false,
@@ -707,7 +711,6 @@ class AuthController {
       }
 
       const { vendorId } = req.params;
-      const { commissionRate } = req.body;
 
       if (!vendorId) {
         return res.status(400).json({
@@ -720,7 +723,6 @@ class AuthController {
         where: { id: vendorId },
         data: {
           status: "APPROVED",
-          ...(commissionRate && { commissionRate: parseFloat(commissionRate) }),
         },
         include: {
           user: true,

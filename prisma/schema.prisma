@@ -180,12 +180,12 @@ model Vendor {
   businessName     String
   ownerName        String
   contactNumbers   String[] // Array of phone numbers
-  email            String?
+  email            String
   businessAddress  String
-  googleMapsLink   String?
-  gstNumber        String?
-  panNumber        String?
-  aadhaarNumber    String?
+  googleMapsLink   String
+  gstNumber        String
+  panNumber        String
+  aadhaarNumber    String
   vendorType       VendorType
   status           VendorStatus  @default(PENDING)
   commissionRate   Float         @default(16.0) // Percentage

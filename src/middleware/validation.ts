@@ -254,7 +254,7 @@ export const loginRateLimit = rateLimit({
  */
 export const vendorRegistrationRateLimit = rateLimit({
   windowMs: 24 * 60 * 60 * 1000, // 24 hours
-  max: 3, // Limit each IP to 3 vendor registrations per day
+  max: 5, // Limit each IP to 3 vendor registrations per day
   message: {
     success: false,
     message:

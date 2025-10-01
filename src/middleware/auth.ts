@@ -219,6 +219,8 @@ export const authorizeAdmin = async (
   next: NextFunction
 ) => {
   try {
+    console.log("Hello world");
+    console.log(req.user);
     if (!req.user || req.user.role !== "ADMIN") {
       return res.status(403).json({
         success: false,
