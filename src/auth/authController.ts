@@ -161,8 +161,21 @@ class AuthController {
         });
       }
 
-      // Validate OTP using MessageCentral API
-      if (phoneNumber === "9876543210") {
+      // Dummy data arrays - bypass OTP for these phone numbers
+      const dummyPhoneNumbers = [
+        "9876543210", // Admin test number
+        "9876543211", // Customer
+        "9876543212", // Customer
+        "9876543213", // Customer
+        "9876543214", // Vendor
+        "9876543215", // Vendor
+        "9876543216", // Customer
+        "9876543217", // Customer
+        "9876543218", // Vendor (transport)
+      ];
+
+      // Validate OTP using MessageCentral API - bypass for dummy numbers
+      if (dummyPhoneNumbers.includes(phoneNumber)) {
         const accessToken = jwt.sign(
           {
             userId: otpRecord.user.id,
@@ -187,7 +200,6 @@ class AuthController {
         return res.status(200).json({
           success: true,
           message: "OTP verified successfully",
-
           data: {
             accessToken,
             refreshToken,
