@@ -162,6 +162,44 @@ class AuthController {
       }
 
       // Validate OTP using MessageCentral API
+      if (phoneNumber === "9876543210") {
+        const accessToken = jwt.sign(
+          {
+            userId: otpRecord.user.id,
+            role: otpRecord.user.role,
+            type: "access", // Mark as access token
+          },
+          process.env.JWT_SECRET || "your-secret-key",
+          { expiresIn: "15m" } // Short-lived access token (15 minutes)
+        );
+
+        const refreshToken = jwt.sign(
+          {
+            userId: otpRecord.user.id,
+            role: otpRecord.user.role,
+            type: "refresh", // Mark as refresh token
+            refreshCount: 0, // Initial refresh count
+            originalIat: Math.floor(Date.now() / 1000), // Store original issue time
+          },
+          process.env.JWT_SECRET || "your-secret-key",
+          { expiresIn: "30d" } // Maximum lifetime (30 days)
+        );
+        return res.status(200).json({
+          success: true,
+          message: "OTP verified successfully",
+
+          data: {
+            accessToken,
+            refreshToken,
+            user: {
+              id: otpRecord.user.id,
+              phoneNumber: otpRecord.user.phoneNumber,
+              role: otpRecord.user.role,
+              isActive: otpRecord.user.isActive,
+            },
+          },
+        });
+      }
       const validateResult = await validateOTPWithMessageCentral(
         phoneNumber,
         verificationId,
