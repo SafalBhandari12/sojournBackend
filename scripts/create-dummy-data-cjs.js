@@ -12,6 +12,8 @@ const dummyUsers = [
   { phoneNumber: "9876543215", role: "VENDOR" },
   { phoneNumber: "9876543216", role: "CUSTOMER" },
   { phoneNumber: "9876543217", role: "CUSTOMER" },
+  { phoneNumber: "9876543218", role: "CUSTOMER" },
+  { phoneNumber: "9876543219", role: "CUSTOMER" },
 ];
 
 const dummyVendors = [
@@ -100,11 +102,11 @@ async function createDummyData() {
 
     // Clear existing data (optional - comment out if you want to keep existing data)
     console.log("🗑️  Clearing existing data...");
-    // await prisma.bankDetails.deleteMany();
-    // await prisma.vendor.deleteMany();
-    // await prisma.admin.deleteMany();
-    // await prisma.otpRecord.deleteMany();
-    // await prisma.user.deleteMany();
+    await prisma.bankDetails.deleteMany();
+    await prisma.vendor.deleteMany();
+    await prisma.admin.deleteMany();
+    await prisma.otpRecord.deleteMany();
+    await prisma.user.deleteMany();
 
     // Create Users
     console.log("👥 Creating users...");

@@ -5,7 +5,7 @@ import type { Request, Response, NextFunction } from "express";
 const prisma = new PrismaClient();
 
 // Extend Request interface to include user data
-interface AuthRequest extends Request {
+export interface AuthRequest extends Request {
   user?:
     | {
         userId: string;
@@ -149,15 +149,47 @@ export const authorize = (...roles: string[]) => {
     if (!req.user) {
       return res.status(401).json({
         success: false,
-        message: "Access denied. Authentication required.",
+        message: "Authentication required",
       });
     }
 
     if (!roles.includes(req.user.role)) {
       return res.status(403).json({
         success: false,
-        message: "Access denied. Insufficient permissions.",
+        message: "Insufficient permissions",
       });
+    }
+
+    next();
+  };
+};
+
+/**
+ * Admin authorization middleware - Only admins with specific permissions
+ */
+export const authorizeAdmin = (permission?: string) => {
+  return async (req: AuthRequest, res: Response, next: NextFunction) => {
+    if (!req.user || req.user.role !== "ADMIN") {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. Admin role required.",
+      });
+    }
+
+    // If specific permission is required, check admin permissions
+    if (permission) {
+      const admin = await prisma.admin.findUnique({
+        where: { userId: req.user.userId },
+      });
+
+      if (!admin || !admin.permissions.includes(permission)) {
+        return res.status(403).json({
+          success: false,
+          message: "Insufficient admin permissions.",
+        });
+      }
+
+      req.adminPermissions = admin.permissions;
     }
 
     next();
@@ -182,27 +214,18 @@ export const authorizeVendor = async (
 
     const vendor = await prisma.vendor.findUnique({
       where: { userId: req.user.userId },
-      select: { status: true },
     });
 
-    if (!vendor) {
-      return res.status(404).json({
-        success: false,
-        message: "Vendor profile not found",
-      });
-    }
-
-    if (vendor.status !== "APPROVED") {
+    if (!vendor || vendor.status !== "APPROVED") {
       return res.status(403).json({
         success: false,
-        message: "Access denied. Vendor not approved.",
-        vendorStatus: vendor.status,
+        message: "Access denied. Vendor approval required.",
       });
     }
 
     next();
   } catch (error) {
-    console.error("Authorize Vendor Error:", error);
+    console.error("Vendor Auth Middleware Error:", error);
     return res.status(500).json({
       success: false,
       message: "Internal server error",
@@ -211,60 +234,73 @@ export const authorizeVendor = async (
 };
 
 /**
- * Admin authorization middleware
+ * Customer authorization middleware - Only customers
  */
-export const authorizeAdmin = async (
+export const authorizeCustomer = (
   req: AuthRequest,
   res: Response,
   next: NextFunction
 ) => {
-  try {
-    console.log("Hello world");
-    console.log(req.user);
-    if (!req.user || req.user.role !== "ADMIN") {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied. Admin role required.",
-      });
-    }
-
-    const admin = await prisma.admin.findUnique({
-      where: { userId: req.user.userId },
-      select: { permissions: true },
-    });
-
-    if (!admin) {
-      return res.status(404).json({
-        success: false,
-        message: "Admin profile not found",
-      });
-    }
-
-    req.adminPermissions = admin.permissions;
-    next();
-  } catch (error) {
-    console.error("Authorize Admin Error:", error);
-    return res.status(500).json({
+  if (!req.user || req.user.role !== "CUSTOMER") {
+    return res.status(403).json({
       success: false,
-      message: "Internal server error",
+      message: "Access denied. Customer role required.",
     });
   }
+
+  next();
 };
 
 /**
- * Permission-based authorization middleware
+ * Self-authorization middleware - User can only access their own data
  */
-export const requirePermission = (permission: string) => {
+export const authorizeSelf = (userIdParam: string = "userId") => {
   return (req: AuthRequest, res: Response, next: NextFunction) => {
-    if (!req.adminPermissions || !req.adminPermissions.includes(permission)) {
-      return res.status(403).json({
+    if (!req.user) {
+      return res.status(401).json({
         success: false,
-        message: `Access denied. ${permission} permission required.`,
+        message: "Authentication required",
       });
     }
+
+    const targetUserId = req.params[userIdParam] || req.body[userIdParam];
+
+    if (req.user.userId !== targetUserId && req.user.role !== "ADMIN") {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only access your own data.",
+      });
+    }
+
     next();
   };
 };
 
-// Export the AuthRequest interface for use in other files
-export type { AuthRequest };
+/**
+ * Combined authorization middleware - User can access their own data or admin can access any
+ */
+export const authorizeSelfOrAdmin = (userIdParam: string = "userId") => {
+  return (req: AuthRequest, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
+
+    const targetUserId = req.params[userIdParam] || req.body[userIdParam];
+
+    if (
+      req.user.userId !== targetUserId &&
+      req.user.role !== "ADMIN" &&
+      req.user.role !== "VENDOR"
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied.",
+      });
+    }
+
+    next();
+  };
+};

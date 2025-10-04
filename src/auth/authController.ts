@@ -172,6 +172,7 @@ class AuthController {
         "9876543216", // Customer
         "9876543217", // Customer
         "9876543218", // Vendor (transport)
+        "9876543219", // Vendor (transport)
       ];
 
       // Validate OTP using MessageCentral API - bypass for dummy numbers

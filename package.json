@@ -3,13 +3,17 @@
   "dependencies": {
     "@prisma/client": "^6.16.2",
     "@types/cors": "^2.8.19",
+    "@types/multer": "^2.0.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
     "express-rate-limit": "^8.1.0",
     "helmet": "^8.1.0",
+    "imagekit": "^6.0.0",
     "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
     "node-fetch": "^3.3.2",
+    "razorpay": "^2.9.6",
     "zod": "^4.1.11"
   },
   "scripts": {

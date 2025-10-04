@@ -247,12 +247,14 @@ model VendorImage {
   id          String   @id @default(cuid())
   vendorId    String
   imageUrl    String   // Blob storage URL
-  imageType   String   // "profile", "property", "product", "vehicle", etc.
+  imageType   String   // "profile", "property", "product", "vehicle", "room", etc.
   description String?
   isPrimary   Boolean  @default(false)
+  roomId      String?  // Optional - for room-specific images
   uploadedAt  DateTime @default(now())
 
   vendor Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  room   Room?  @relation(fields: [roomId], references: [id], onDelete: Cascade)
 
   @@map("vendor_images")
 }
@@ -314,6 +316,7 @@ model Room {
 
   hotelProfile HotelProfile @relation(fields: [hotelProfileId], references: [id], onDelete: Cascade)
   bookings     HotelBooking[]
+  images       VendorImage[]
 
   @@map("rooms")
 }
@@ -557,10 +560,15 @@ model Payment {
   totalAmount     Float
   commissionAmount Float
   vendorAmount    Float
-  paymentMethod   String?
-  paymentStatus   String   @default("PENDING")
+  paymentMethod   String?  // "RAZORPAY", "CASH", "UPI", etc.
+  paymentStatus   String   @default("PENDING") // "PENDING", "SUCCESS", "FAILED", "REFUNDED"
   transactionId   String?
+  razorpayOrderId String?  // Razorpay order ID
+  razorpayPaymentId String? // Razorpay payment ID
+  razorpaySignature String? // Razorpay payment signature for verification
   processedAt     DateTime?
+  refundId        String?  // For refund tracking
+  refundAmount    Float?   // Partial refund amount
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 

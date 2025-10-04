@@ -6,6 +6,7 @@ import rateLimit from "express-rate-limit";
 
 // Import routes
 import authRoutes from "./auth/authRoutes.js";
+import { hotelRoutes } from "./hotel/hotelRoutes.js";
 
 // Import services
 import { OTPService } from "./auth/otpService.js";
@@ -23,15 +24,12 @@ const PORT = process.env.PORT || 3000;
 // Helmet for security headers
 app.use(helmet());
 
-// CORS configuration
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:3000",
-    credentials: true,
+    origin: "*",
     optionsSuccessStatus: 200,
   })
 );
-
 // ================================
 // GLOBAL RATE LIMITING
 // ================================
@@ -91,6 +89,9 @@ app.get("/health", (req, res) => {
 
 // Authentication routes
 app.use("/api/auth", authRoutes);
+
+// Hotel management routes
+app.use("/api/hotels", hotelRoutes);
 
 // ================================
 // ERROR HANDLING MIDDLEWARE
