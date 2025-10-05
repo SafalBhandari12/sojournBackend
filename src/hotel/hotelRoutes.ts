@@ -164,6 +164,13 @@ router.post(
   hotelController.createPaymentOrder
 );
 
+// Create UPI payment request
+router.post(
+  "/bookings/:bookingId/payment/upi-request",
+  authMiddleware,
+  hotelController.createUpiPaymentRequest
+);
+
 // Verify payment
 router.post(
   "/bookings/:bookingId/payment/verify",
