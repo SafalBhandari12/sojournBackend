@@ -1511,6 +1511,11 @@ export class HotelController {
         where: { id: bookingId },
         include: {
           payment: true,
+          user: {
+            select: {
+              phoneNumber: true,
+            },
+          },
         },
       });
 
@@ -1529,7 +1534,7 @@ export class HotelController {
         );
       }
 
-      // Create Razorpay order
+      // Create Razorpay order with customer information for better UPI/Card/Wallet support
       const orderOptions = {
         amount: Math.round(booking.totalAmount * 100), // Convert to paise
         currency: "INR",
@@ -1538,6 +1543,12 @@ export class HotelController {
           bookingId,
           userId,
           vendorId: booking.vendorId,
+        },
+        // Add customer details for better payment experience
+        customer: {
+          name: "Customer",
+          contact: booking.user?.phoneNumber || "+919999999999",
+          email: "customer@sojourn.com",
         },
       };
 
@@ -1574,6 +1585,21 @@ export class HotelController {
         amount: Math.round(booking.totalAmount * 100), // Send amount in paise to match Razorpay order
         currency: "INR",
         key: process.env.RAZOR_PAY_KEY_ID,
+        // Add customer prefill data for better UX
+        prefill: {
+          name: "Customer",
+          contact: booking.user?.phoneNumber || "",
+          email: "customer@sojourn.com",
+        },
+        // Add theme and company details
+        theme: {
+          color: "#F37254",
+        },
+        modal: {
+          ondismiss: function() {
+            console.log("Payment modal dismissed");
+          },
+        },
         payment,
       };
 
@@ -1594,151 +1620,9 @@ export class HotelController {
     }
   }
 
-  static async createUpiPaymentRequest(req: Request, res: Response) {
-    try {
-      const userId = AuthUtils.getUserIdFromToken(req);
-      const { bookingId } = req.params;
-      const { upiId } = req.body;
-
-      console.log("🔍 CREATE UPI PAYMENT REQUEST:");
-      console.log("- Booking ID:", bookingId);
-      console.log("- User ID:", userId);
-      console.log("- UPI ID:", upiId);
-
-      if (!bookingId) {
-        return ResponseUtils.badRequest(res, "Booking ID is required");
-      }
-
-      if (!upiId) {
-        return ResponseUtils.badRequest(res, "UPI ID is required");
-      }
-
-      // Validate UPI ID format
-      const upiRegex = /^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/;
-      if (!upiRegex.test(upiId)) {
-        return ResponseUtils.badRequest(res, "Invalid UPI ID format");
-      }
-
-      const booking = await prisma.booking.findUnique({
-        where: { id: bookingId },
-        include: {
-          payment: true,
-          user: {
-            select: {
-              phoneNumber: true,
-            },
-          },
-        },
-      });
-
-      if (!booking) {
-        return ResponseUtils.notFound(res, "Booking not found");
-      }
-
-      if (booking.userId !== userId) {
-        return ResponseUtils.unauthorized(res, "Access denied");
-      }
-
-      if (booking.payment && booking.payment.paymentStatus === "SUCCESS") {
-        return ResponseUtils.badRequest(
-          res,
-          "Payment already completed for this booking"
-        );
-      }
-
-      // Create UPI payment request with Razorpay
-      const paymentLinkOptions = {
-        amount: Math.round(booking.totalAmount * 100), // Convert to paise
-        currency: "INR",
-        accept_partial: false,
-        first_min_partial_amount: Math.round(booking.totalAmount * 100),
-        description: `Hotel Booking Payment - Booking ID: ${bookingId}`,
-        customer: {
-          name: "Customer",
-          contact: booking.user?.phoneNumber || "+919876543210", // Use actual user phone number
-          email: "customer@example.com", // Default email since user model doesn't have email
-        },
-        notify: {
-          sms: false,
-          email: false,
-        },
-        reminder_enable: false,
-        notes: {
-          bookingId,
-          userId,
-          vendorId: booking.vendorId,
-        },
-        callback_url: `${
-          process.env.FRONTEND_URL || "http://localhost:3000"
-        }/payment-callback`,
-        callback_method: "get",
-      };
-
-      console.log("🔍 CREATING RAZORPAY PAYMENT LINK:");
-      console.log("- Amount (paise):", paymentLinkOptions.amount);
-      console.log("- Currency:", paymentLinkOptions.currency);
-      console.log("- Description:", paymentLinkOptions.description);
-
-      // Create payment link
-      const paymentLink = await razorpay.paymentLink.create(paymentLinkOptions);
-      console.log("✅ Payment link created successfully:", paymentLink.id);
-
-      // Create or update payment record
-      const payment = await prisma.payment.upsert({
-        where: { bookingId },
-        update: {
-          paymentStatus: "PENDING",
-          // Store UPI ID for reference
-          transactionId: upiId,
-        },
-        create: {
-          bookingId,
-          vendorId: booking.vendorId,
-          totalAmount: booking.totalAmount,
-          commissionAmount: booking.commissionAmount,
-          vendorAmount: booking.totalAmount - booking.commissionAmount,
-          paymentMethod: "UPI",
-          paymentStatus: "PENDING",
-          transactionId: upiId,
-        },
-      });
-
-      const responseData = {
-        paymentLinkId: paymentLink.id,
-        paymentLinkUrl: paymentLink.short_url,
-        upiPaymentUrl: `upi://pay?pa=${encodeURIComponent(
-          process.env.RAZORPAY_UPI_ID || "merchant@razorpay"
-        )}&pn=${encodeURIComponent("Sojourn")}&am=${
-          booking.totalAmount
-        }&cu=INR&tn=${encodeURIComponent("Hotel Booking Payment")}&tr=${
-          paymentLink.id
-        }`,
-        amount: booking.totalAmount,
-        currency: "INR",
-        upiId: upiId,
-        payment,
-      };
-
-      console.log("🔍 UPI PAYMENT RESPONSE:");
-      console.log("- Payment Link ID:", responseData.paymentLinkId);
-      console.log("- Payment Link URL:", responseData.paymentLinkUrl);
-      console.log("- UPI Payment URL:", responseData.upiPaymentUrl);
-      console.log("- Amount:", responseData.amount);
-      console.log("- UPI ID:", responseData.upiId);
-
-      return ResponseUtils.success(
-        res,
-        "UPI payment request created successfully",
-        responseData
-      );
-    } catch (error) {
-      console.error("Create UPI payment request error:", error);
-      return ResponseUtils.serverError(
-        res,
-        "Failed to create UPI payment request"
-      );
-    }
-  }
+  // Remove the insecure UPI payment method - use standard Razorpay checkout instead
+  // This method was a security risk as it was creating custom UPI URLs
+  // Instead, use createPaymentOrder which creates proper Razorpay orders for all payment methods
 
   static async verifyPayment(req: Request, res: Response) {
     try {
