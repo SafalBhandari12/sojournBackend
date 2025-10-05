@@ -1623,6 +1623,11 @@ export class HotelController {
         where: { id: bookingId },
         include: {
           payment: true,
+          user: {
+            select: {
+              phoneNumber: true,
+            },
+          },
         },
       });
 
@@ -1650,8 +1655,8 @@ export class HotelController {
         description: `Hotel Booking Payment - Booking ID: ${bookingId}`,
         customer: {
           name: "Customer",
-          contact: "+919999999999", // You can get this from user profile
-          email: "customer@example.com",
+          contact: booking.user?.phoneNumber || "+919876543210", // Use actual user phone number
+          email: "customer@example.com", // Default email since user model doesn't have email
         },
         notify: {
           sms: false,
