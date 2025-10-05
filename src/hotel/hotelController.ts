@@ -934,7 +934,7 @@ export class HotelController {
         );
       }
 
-      const availableRooms = await this.getAvailableRoomsForDates(
+      const availableRooms = await HotelController.getAvailableRoomsForDates(
         hotelId,
         new Date(checkIn as string),
         new Date(checkOut as string),
