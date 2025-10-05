@@ -327,10 +327,11 @@ export const hotelBookingSchema = z.object({
       checkInDate: z
         .string()
         .transform((str) => new Date(str))
-        .refine(
-          (date) => date > new Date(),
-          "Check-in date must be in the future"
-        ),
+        .refine((date) => {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0); // Set to start of today
+          return date >= today;
+        }, "Check-in date cannot be in the past"),
       checkOutDate: z.string().transform((str) => new Date(str)),
       numberOfGuests: z.number().int().min(1, "Must have at least 1 guest"),
     })

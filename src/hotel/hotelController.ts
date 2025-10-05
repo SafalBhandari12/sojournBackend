@@ -1047,7 +1047,9 @@ export class HotelController {
         }
 
         // Verify dates are in the future
-        if (checkIn < new Date()) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0); // Set to start of today for comparison
+        if (checkIn < today) {
           throw new Error("Check-in date cannot be in the past");
         }
 
