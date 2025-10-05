@@ -842,11 +842,12 @@ export class HotelController {
         availableHotels = [];
 
         for (const hotel of hotels) {
-          const availableRooms = await this.getAvailableRoomsForDates(
-            hotel.id,
-            new Date(checkIn as string),
-            new Date(checkOut as string)
-          );
+          const availableRooms =
+            await HotelController.getAvailableRoomsForDates(
+              hotel.id,
+              new Date(checkIn as string),
+              new Date(checkOut as string)
+            );
 
           if (availableRooms.length > 0) {
             availableHotels.push({
