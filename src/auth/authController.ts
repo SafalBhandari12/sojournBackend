@@ -360,6 +360,47 @@ class AuthController {
         });
       }
 
+      // Dummy data arrays - bypass OTP for these phone numbers
+      const dummyPhoneNumbers = [
+        "9876543210", // Admin test number
+        "9876543211", // Customer
+        "9876543212", // Customer
+        "9876543213", // Customer
+        "9876543214", // Vendor
+        "9876543215", // Vendor
+        "9876543216", // Customer
+        "9876543217", // Customer
+        "9876543218", // Vendor (transport)
+        "9876543219", // Vendor (transport)
+        "7847915622", // My number (Normal user)
+      ];
+
+      // Mark previous OTPs as used
+      await markPreviousOTPsAsUsed(phoneNumber);
+
+      // For dummy numbers, create a fake OTP record without actually sending OTP
+      if (dummyPhoneNumbers.includes(phoneNumber)) {
+        // Create a fake OTP record with a dummy verification ID
+        const fakeVerificationId = `dummy_${Date.now()}_${phoneNumber}`;
+        const timeout = 300; // 5 minutes
+
+        await createOTPRecord(
+          existingUser.id,
+          phoneNumber,
+          fakeVerificationId,
+          timeout.toString()
+        );
+
+        return res.status(200).json({
+          success: true,
+          message: "OTP resent successfully (dummy mode)",
+          data: {
+            verificationId: fakeVerificationId,
+            timeout: timeout,
+          },
+        });
+      }
+
       // Get OTP service configuration
       const config = await getOTPConfig();
 
@@ -369,9 +410,6 @@ class AuthController {
           message: "OTP service not configured",
         });
       }
-
-      // Mark previous OTPs as used
-      await markPreviousOTPsAsUsed(phoneNumber);
 
       // Send new OTP using MessageCentral API
       const otpResult = await sendOTPToMessageCentral(phoneNumber, config);
@@ -732,27 +770,67 @@ class AuthController {
   // ================================
 
   /**
+   * Test admin endpoint to verify middleware is working
+   */
+  static async testAdminAccess(req: AuthRequest, res: Response) {
+    console.log("🧪 Test Admin Access called");
+    console.log("🧪 User:", req.user);
+
+    try {
+      console.log("🧪 Sending immediate response...");
+      return res.status(200).json({
+        success: true,
+        message: "Admin access successful",
+        data: {
+          user: req.user,
+          timestamp: new Date().toISOString(),
+          serverTime: Date.now(),
+        },
+      });
+    } catch (error) {
+      console.error("🧪 Test Admin Access Error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  }
+
+  /**
    * Get all vendors for admin review
    */
   static async getVendorsForAdmin(req: AuthRequest, res: Response) {
+    console.log("🏢 Admin Controller - getVendorsForAdmin called");
+    console.log("🏢 User:", req.user);
+    console.log("🏢 Query params:", req.query);
+
     try {
       // Check if user is admin
-      console.log(req.user);
-      console.log("Safal");
       if (!req.user || req.user.role !== "ADMIN") {
+        console.log("🏢 Access denied - not admin");
         return res.status(403).json({
           success: false,
           message: "Access denied. Admin role required.",
         });
       }
 
+      console.log("🏢 Admin access confirmed, processing query...");
       const { status, vendorType, page = 1, limit = 10 } = req.query;
       const skip = (Number(page) - 1) * Number(limit);
 
       const where: any = {};
-      if (status) where.status = status;
-      if (vendorType) where.vendorType = vendorType;
+      if (status && typeof status === "string") {
+        where.status = status.toUpperCase();
+      }
+      if (vendorType && typeof vendorType === "string") {
+        where.vendorType = vendorType.toUpperCase();
+      }
 
+      console.log("🏢 Database query where:", where);
+      console.log("🏢 Pagination - skip:", skip, "take:", Number(limit));
+
+      console.log("🏢 Executing database query...");
       const vendors = await prisma.vendor.findMany({
         where,
         include: {
@@ -769,8 +847,13 @@ class AuthController {
         orderBy: { createdAt: "desc" },
       });
 
-      const total = await prisma.vendor.count({ where });
+      console.log("🏢 Vendors found:", vendors.length);
 
+      console.log("🏢 Getting total count...");
+      const total = await prisma.vendor.count({ where });
+      console.log("🏢 Total count:", total);
+
+      console.log("🏢 Sending response...");
       return res.status(200).json({
         success: true,
         data: {
@@ -783,10 +866,15 @@ class AuthController {
         },
       });
     } catch (error) {
-      console.error("Get Vendors For Admin Error:", error);
+      console.error("🏢 Get Vendors For Admin Error:", error);
+      console.error(
+        "🏢 Error stack:",
+        error instanceof Error ? error.stack : "No stack"
+      );
       return res.status(500).json({
         success: false,
         message: "Internal server error",
+        error: error instanceof Error ? error.message : "Unknown error",
       });
     }
   }

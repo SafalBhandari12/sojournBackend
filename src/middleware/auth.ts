@@ -24,10 +24,14 @@ export const authMiddleware = async (
   res: Response,
   next: NextFunction
 ) => {
+  console.log("🔐 Auth Middleware - Processing request to:", req.path);
+
   try {
     const token = req.header("Authorization")?.replace("Bearer ", "");
+    console.log("🔐 Token received:", token ? "Yes" : "No");
 
     if (!token) {
+      console.log("🔐 No token provided");
       return res.status(401).json({
         success: false,
         message: "Access denied. No token provided.",
@@ -39,15 +43,18 @@ export const authMiddleware = async (
         token,
         process.env.JWT_SECRET || "your-secret-key"
       ) as any;
+      console.log("🔐 Token decoded successfully, userId:", decoded.userId);
 
       // Ensure this is an access token, not a refresh token
       if (decoded.type !== "access") {
+        console.log("🔐 Invalid token type:", decoded.type);
         return res.status(401).json({
           success: false,
           message: "Invalid token type. Access token required.",
         });
       }
 
+      console.log("🔐 Fetching user from database...");
       // Get user from database to ensure they still exist and are active
       const user = await prisma.user.findUnique({
         where: { id: decoded.userId },
@@ -58,8 +65,13 @@ export const authMiddleware = async (
           isActive: true,
         },
       });
+      console.log(
+        "🔐 User found:",
+        user ? `${user.role} (${user.phoneNumber})` : "Not found"
+      );
 
       if (!user || !user.isActive) {
+        console.log("🔐 User invalid or inactive");
         return res.status(401).json({
           success: false,
           message: "Access denied. Invalid or inactive user.",
@@ -72,15 +84,17 @@ export const authMiddleware = async (
         role: user.role,
       };
 
+      console.log("🔐 Auth middleware successful, proceeding to next...");
       next();
     } catch (jwtError) {
+      console.log("🔐 JWT Error:", jwtError);
       return res.status(401).json({
         success: false,
         message: "Access denied. Invalid token.",
       });
     }
   } catch (error) {
-    console.error("Auth Middleware Error:", error);
+    console.error("🔐 Auth Middleware Error:", error);
     return res.status(500).json({
       success: false,
       message: "Internal server error",
@@ -169,31 +183,72 @@ export const authorize = (...roles: string[]) => {
  */
 export const authorizeAdmin = (permission?: string) => {
   return async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      if (!req.user || req.user.role !== "ADMIN") {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. Admin role required.",
+        });
+      }
+
+      // If specific permission is required, check admin permissions
+      if (permission) {
+        const admin = await prisma.admin.findUnique({
+          where: { userId: req.user.userId },
+        });
+
+        if (!admin || !admin.permissions.includes(permission)) {
+          return res.status(403).json({
+            success: false,
+            message: "Insufficient admin permissions.",
+          });
+        }
+
+        req.adminPermissions = admin.permissions;
+      }
+
+      next();
+    } catch (error) {
+      console.error("Admin Auth Middleware Error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  };
+};
+
+/**
+ * Simple admin authorization middleware - Just checks for admin role
+ */
+export const simpleAdminAuth = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  console.log("👑 Simple Admin Auth - Checking user:", req.user);
+
+  try {
     if (!req.user || req.user.role !== "ADMIN") {
+      console.log(
+        "👑 Admin auth failed - User:",
+        req.user ? req.user.role : "No user"
+      );
       return res.status(403).json({
         success: false,
         message: "Access denied. Admin role required.",
       });
     }
 
-    // If specific permission is required, check admin permissions
-    if (permission) {
-      const admin = await prisma.admin.findUnique({
-        where: { userId: req.user.userId },
-      });
-
-      if (!admin || !admin.permissions.includes(permission)) {
-        return res.status(403).json({
-          success: false,
-          message: "Insufficient admin permissions.",
-        });
-      }
-
-      req.adminPermissions = admin.permissions;
-    }
-
+    console.log("👑 Admin auth successful, proceeding...");
     next();
-  };
+  } catch (error) {
+    console.error("👑 Simple Admin Auth Middleware Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
 };
 
 /**

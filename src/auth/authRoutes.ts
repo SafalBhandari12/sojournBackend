@@ -11,7 +11,7 @@ import {
   optionalAuth,
   authorize,
   authorizeVendor,
-  authorizeAdmin,
+  simpleAdminAuth,
 } from "../middleware/auth.js";
 
 const router = express.Router();
@@ -122,6 +122,18 @@ router.put(
 // ================================
 
 /**
+ * @route GET /api/auth/admin/test
+ * @desc Test admin access
+ * @access Private (Admin only)
+ */
+router.get(
+  "/admin/test",
+  authMiddleware,
+  simpleAdminAuth,
+  AuthController.testAdminAccess
+);
+
+/**
  * @route GET /api/auth/admin/vendors
  * @desc Get all vendors for admin review
  * @access Private (Admin only)
@@ -129,7 +141,7 @@ router.put(
 router.get(
   "/admin/vendors",
   authMiddleware,
-  authorizeAdmin,
+  simpleAdminAuth,
   AuthController.getVendorsForAdmin
 );
 
@@ -141,7 +153,7 @@ router.get(
 router.put(
   "/admin/vendor/:vendorId/approve",
   authMiddleware,
-  authorizeAdmin,
+  simpleAdminAuth,
   AuthController.approveVendor
 );
 
@@ -153,7 +165,7 @@ router.put(
 router.put(
   "/admin/vendor/:vendorId/reject",
   authMiddleware,
-  authorizeAdmin,
+  simpleAdminAuth,
   AuthController.rejectVendor
 );
 
@@ -165,7 +177,7 @@ router.put(
 router.put(
   "/admin/vendor/:vendorId/suspend",
   authMiddleware,
-  authorizeAdmin,
+  simpleAdminAuth,
   AuthController.suspendVendor
 );
 
@@ -177,7 +189,7 @@ router.put(
 router.put(
   "/admin/user/:userId/assign-admin",
   authMiddleware,
-  authorizeAdmin,
+  simpleAdminAuth,
   AuthController.assignAdminRole
 );
 
@@ -189,7 +201,7 @@ router.put(
 router.put(
   "/admin/user/:userId/revoke-admin",
   authMiddleware,
-  authorizeAdmin,
+  simpleAdminAuth,
   AuthController.revokeAdminRole
 );
 
@@ -201,7 +213,7 @@ router.put(
 router.get(
   "/admin/users",
   authMiddleware,
-  authorizeAdmin,
+  simpleAdminAuth,
   AuthController.getAllUsers
 );
 
@@ -213,7 +225,7 @@ router.get(
 router.put(
   "/admin/user/:userId/toggle-status",
   authMiddleware,
-  authorizeAdmin,
+  simpleAdminAuth,
   AuthController.toggleUserStatus
 );
 
@@ -225,7 +237,7 @@ router.put(
 router.put(
   "/admin/profile",
   authMiddleware,
-  authorizeAdmin,
+  simpleAdminAuth,
   AuthController.updateAdminProfile
 );
 
