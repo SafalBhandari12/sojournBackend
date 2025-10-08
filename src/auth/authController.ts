@@ -773,11 +773,7 @@ class AuthController {
    * Test admin endpoint to verify middleware is working
    */
   static async testAdminAccess(req: AuthRequest, res: Response) {
-    console.log("🧪 Test Admin Access called");
-    console.log("🧪 User:", req.user);
-
     try {
-      console.log("🧪 Sending immediate response...");
       return res.status(200).json({
         success: true,
         message: "Admin access successful",
@@ -788,7 +784,7 @@ class AuthController {
         },
       });
     } catch (error) {
-      console.error("🧪 Test Admin Access Error:", error);
+      console.error("Test Admin Access Error:", error);
       return res.status(500).json({
         success: false,
         message: "Internal server error",
@@ -796,7 +792,6 @@ class AuthController {
       });
     }
   }
-
   /**
    * Get all vendors for admin review
    */
