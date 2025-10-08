@@ -58,6 +58,47 @@ class AuthController {
         });
       }
 
+      // Dummy data arrays - bypass OTP for these phone numbers
+      const dummyPhoneNumbers = [
+        "9876543210", // Admin test number
+        "9876543211", // Customer
+        "9876543212", // Customer
+        "9876543213", // Customer
+        "9876543214", // Vendor
+        "9876543215", // Vendor
+        "9876543216", // Customer
+        "9876543217", // Customer
+        "9876543218", // Vendor (transport)
+        "9876543219", // Vendor (transport)
+        "7847915622", // My number (Normal user)
+      ];
+
+      // For dummy numbers, create a fake OTP record without actually sending OTP
+      if (dummyPhoneNumbers.includes(phoneNumber)) {
+        // Find or create user
+        const user = await findOrCreateUser(phoneNumber);
+
+        // Create a fake OTP record with a dummy verification ID
+        const fakeVerificationId = `dummy_${Date.now()}_${phoneNumber}`;
+        const timeout = 300; // 5 minutes
+
+        await createOTPRecord(
+          user.id,
+          phoneNumber,
+          fakeVerificationId,
+          timeout.toString()
+        );
+
+        return res.status(200).json({
+          success: true,
+          message: "OTP sent successfully (dummy mode)",
+          data: {
+            verificationId: fakeVerificationId,
+            timeout: timeout,
+          },
+        });
+      }
+
       // Get OTP service configuration
       const config = await getOTPConfig();
 
@@ -80,7 +121,7 @@ class AuthController {
           user.id,
           otpResult.data.mobileNumber,
           otpResult.data.verificationId,
-          otpResult.data.timeout
+          otpResult.data.timeout.toString()
         );
 
         return res.status(200).json({
@@ -341,7 +382,7 @@ class AuthController {
           existingUser.id,
           otpResult.data.mobileNumber,
           otpResult.data.verificationId,
-          otpResult.data.timeout
+          otpResult.data.timeout.toString()
         );
 
         return res.status(200).json({
