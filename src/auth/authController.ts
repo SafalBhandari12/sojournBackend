@@ -691,7 +691,6 @@ class AuthController {
           businessName: vendor.businessName,
           vendorType: vendor.vendorType,
           createdAt: vendor.createdAt,
-          commissionRate: vendor.commissionRate,
         },
       });
     } catch (error) {
