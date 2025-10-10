@@ -1509,40 +1509,46 @@ export class HotelController {
 
       // Use transaction to ensure booking exists and update status atomically
       const result = await prisma.$transaction(async (tx) => {
-        // Find booking with user verification
-        const booking = await tx.booking.findFirst({
+        // First, find the hotel booking and get the main booking ID
+        const hotelBooking = await tx.hotelBooking.findFirst({
           where: {
-            id: bookingId,
-            userId: userId, // Ensure booking belongs to the user making payment
+            id: bookingId, // bookingId is the hotel booking ID from URL
           },
           include: {
-            payment: true,
-            user: {
-              select: {
-                phoneNumber: true,
+            booking: {
+              include: {
+                user: {
+                  select: {
+                    phoneNumber: true,
+                  },
+                },
+                payment: true,
               },
             },
-            hotelBooking: {
-              include: {
-                hotelProfile: {
-                  select: {
-                    hotelName: true,
-                  },
-                },
-                room: {
-                  select: {
-                    roomType: true,
-                    roomNumber: true,
-                  },
-                },
+            hotelProfile: {
+              select: {
+                hotelName: true,
+              },
+            },
+            room: {
+              select: {
+                roomType: true,
+                roomNumber: true,
               },
             },
           },
         });
 
-        if (!booking) {
+        if (!hotelBooking) {
+          throw new Error("Hotel booking not found");
+        }
+
+        // Verify the booking belongs to the current user
+        if (hotelBooking.booking.userId !== userId) {
           throw new Error("Booking not found or access denied");
         }
+
+        const booking = hotelBooking.booking;
 
         // Check if booking is in correct status for payment
         if (!["DRAFT", "PENDING"].includes(booking.status)) {
@@ -1564,9 +1570,8 @@ export class HotelController {
             bookingId,
             userId,
             vendorId: booking.vendorId,
-            hotelName:
-              booking.hotelBooking?.[0]?.hotelProfile?.hotelName || "Hotel",
-            roomType: booking.hotelBooking?.[0]?.room?.roomType || "Room",
+            hotelName: hotelBooking.hotelProfile?.hotelName || "Hotel",
+            roomType: hotelBooking.room?.roomType || "Room",
           },
         };
 
@@ -1584,25 +1589,25 @@ export class HotelController {
 
         // Update booking status to PENDING when payment is initiated
         await tx.booking.update({
-          where: { id: bookingId },
+          where: { id: booking.id },
           data: { status: "PENDING" },
         });
 
         // Update hotel booking status to PENDING when payment is initiated
-        await tx.hotelBooking.updateMany({
-          where: { bookingId },
+        await tx.hotelBooking.update({
+          where: { id: bookingId },
           data: { status: "PENDING" },
         });
 
-        // Create or update payment record
+        // Create or update payment record (use main booking ID)
         const payment = await tx.payment.upsert({
-          where: { bookingId },
+          where: { bookingId: booking.id },
           update: {
             razorpayOrderId: razorpayOrder.id,
             paymentStatus: "PENDING",
           },
           create: {
-            bookingId,
+            bookingId: booking.id,
             vendorId: booking.vendorId,
             totalAmount: booking.totalAmount,
             commissionAmount: booking.commissionAmount,
@@ -1615,6 +1620,7 @@ export class HotelController {
 
         return {
           booking,
+          hotelBooking,
           payment,
           razorpayOrder,
         };
@@ -1628,7 +1634,7 @@ export class HotelController {
         key: process.env.RAZOR_PAY_KEY_ID,
         name: "Sojourn", // Company name
         description: `Hotel Booking - ${
-          result.booking.hotelBooking?.[0]?.hotelProfile?.hotelName || "Hotel"
+          result.hotelBooking.hotelProfile?.hotelName || "Hotel"
         }`,
         image: "https://your-logo-url.com/logo.png", // Add your company logo URL
         prefill: {
@@ -1665,9 +1671,9 @@ export class HotelController {
           id: result.booking.id,
           status: result.booking.status,
           totalAmount: result.booking.totalAmount,
-          hotelName: result.booking.hotelBooking?.[0]?.hotelProfile?.hotelName,
-          roomType: result.booking.hotelBooking?.[0]?.room?.roomType,
-          roomNumber: result.booking.hotelBooking?.[0]?.room?.roomNumber,
+          hotelName: result.hotelBooking.hotelProfile?.hotelName,
+          roomType: result.hotelBooking.room?.roomType,
+          roomNumber: result.hotelBooking.room?.roomNumber,
         },
       };
 
@@ -1724,16 +1730,23 @@ export class HotelController {
         return ResponseUtils.badRequest(res, "Booking ID is required");
       }
 
-      const booking = await prisma.booking.findUnique({
-        where: { id: bookingId },
+      // Find the hotel booking first, then get the main booking
+      const hotelBooking = await prisma.hotelBooking.findFirst({
+        where: { id: bookingId }, // bookingId is the hotel booking ID
         include: {
-          payment: true,
+          booking: {
+            include: {
+              payment: true,
+            },
+          },
         },
       });
 
-      if (!booking) {
-        return ResponseUtils.notFound(res, "Booking not found");
+      if (!hotelBooking) {
+        return ResponseUtils.notFound(res, "Hotel booking not found");
       }
+
+      const booking = hotelBooking.booking;
 
       if (booking.userId !== userId) {
         return ResponseUtils.unauthorized(res, "Access denied");
@@ -1754,9 +1767,9 @@ export class HotelController {
       const isValidSignature = generated_signature === razorpay_signature;
 
       if (isValidSignature) {
-        // Update payment status
+        // Update payment status (use main booking ID)
         await prisma.payment.update({
-          where: { bookingId },
+          where: { bookingId: booking.id },
           data: {
             paymentStatus: "SUCCESS",
             razorpayPaymentId: razorpay_payment_id,
@@ -1765,22 +1778,22 @@ export class HotelController {
           },
         });
 
-        // Update booking status
+        // Update booking status (use main booking ID)
         await prisma.booking.update({
-          where: { id: bookingId },
+          where: { id: booking.id },
           data: { status: "CONFIRMED" },
         });
 
-        // Update hotel booking status
-        await prisma.hotelBooking.updateMany({
-          where: { bookingId },
+        // Update hotel booking status (use hotel booking ID)
+        await prisma.hotelBooking.update({
+          where: { id: bookingId },
           data: { status: "CONFIRMED" },
         });
 
         return ResponseUtils.success(res, "Payment verified successfully");
       } else {
         await prisma.payment.update({
-          where: { bookingId },
+          where: { bookingId: booking.id },
           data: {
             paymentStatus: "FAILED",
           },
