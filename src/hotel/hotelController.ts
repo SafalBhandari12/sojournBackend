@@ -979,10 +979,10 @@ export class HotelController {
 
     for (const room of rooms) {
       // Check if room is available for the given dates with improved conflict detection
+      // Only count CONFIRMED bookings and PENDING bookings with successful payments or recent activity
       const conflictingBookings = await prisma.hotelBooking.findMany({
         where: {
           roomId: room.id,
-          status: { in: ["PENDING", "CONFIRMED"] }, // Exclude DRAFT bookings from availability check
           AND: [
             {
               checkInDate: { lt: checkOut }, // Existing booking starts before new booking ends
@@ -990,7 +990,35 @@ export class HotelController {
             {
               checkOutDate: { gt: checkIn }, // Existing booking ends after new booking starts
             },
+            {
+              OR: [
+                { status: "CONFIRMED" }, // Always count confirmed bookings
+                {
+                  // Only count PENDING bookings that have successful payments
+                  status: "PENDING",
+                  booking: {
+                    payment: {
+                      paymentStatus: "SUCCESS",
+                    },
+                  },
+                },
+                {
+                  // Count PENDING bookings that are very recent (within 30 minutes) to allow payment completion
+                  status: "PENDING",
+                  createdAt: {
+                    gt: new Date(Date.now() - 30 * 60 * 1000), // 30 minutes ago
+                  },
+                },
+              ],
+            },
           ],
+        },
+        include: {
+          booking: {
+            include: {
+              payment: true,
+            },
+          },
         },
       });
 
@@ -1011,6 +1039,9 @@ export class HotelController {
       const userId = AuthUtils.getUserIdFromToken(req);
       const { hotelId, roomId, checkInDate, checkOutDate, numberOfGuests } =
         req.body;
+
+      // Clean up abandoned bookings before creating new booking
+      await HotelController.autoCleanupExpiredDraftBookings();
 
       // Use a transaction to ensure data consistency and prevent race conditions
       const result = await prisma.$transaction(async (tx) => {
@@ -1053,11 +1084,11 @@ export class HotelController {
           throw new Error("Check-in date cannot be in the past");
         }
 
-        // Check for conflicting bookings with more robust query - exclude DRAFT bookings
+        // Check for conflicting bookings with more robust query
+        // Only count CONFIRMED bookings and PENDING bookings with successful payments or recent activity
         const conflictingBookings = await tx.hotelBooking.findMany({
           where: {
             roomId,
-            status: { in: ["PENDING", "CONFIRMED"] }, // Exclude DRAFT bookings from conflict check
             AND: [
               {
                 checkInDate: { lt: checkOut }, // Existing booking starts before new booking ends
@@ -1065,7 +1096,35 @@ export class HotelController {
               {
                 checkOutDate: { gt: checkIn }, // Existing booking ends after new booking starts
               },
+              {
+                OR: [
+                  { status: "CONFIRMED" }, // Always count confirmed bookings
+                  {
+                    // Only count PENDING bookings that have successful payments
+                    status: "PENDING",
+                    booking: {
+                      payment: {
+                        paymentStatus: "SUCCESS",
+                      },
+                    },
+                  },
+                  {
+                    // Count PENDING bookings that are very recent (within 30 minutes) to allow payment completion
+                    status: "PENDING",
+                    createdAt: {
+                      gt: new Date(Date.now() - 30 * 60 * 1000), // 30 minutes ago
+                    },
+                  },
+                ],
+              },
             ],
+          },
+          include: {
+            booking: {
+              include: {
+                payment: true,
+              },
+            },
           },
         });
         if (conflictingBookings.length > 0) {
@@ -1566,7 +1625,7 @@ export class HotelController {
         const timestamp = Date.now().toString().slice(-8); // Last 8 digits of timestamp
         const shortBookingId = bookingId.slice(-8); // Last 8 chars of booking ID
         const receipt = `bk_${shortBookingId}_${timestamp}`; // Format: bk_12345678_87654321 (max 22 chars)
-        
+
         const orderOptions = {
           amount: Math.round(booking.totalAmount * 100), // Convert to paise
           currency: "INR",
@@ -1895,6 +1954,109 @@ export class HotelController {
   // DRAFT BOOKING CLEANUP
   // ================================
 
+  static async cleanupAbandonedBookings(req: Request, res: Response) {
+    try {
+      // Only allow admins to run this cleanup
+      const userId = AuthUtils.getUserIdFromToken(req);
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+      });
+
+      if (!user || user.role !== "ADMIN") {
+        return ResponseUtils.unauthorized(res, "Only admins can run cleanup");
+      }
+
+      // Clean up both DRAFT bookings older than 24 hours and PENDING bookings older than 30 minutes without successful payment
+      const draftCutoffTime = new Date();
+      draftCutoffTime.setHours(draftCutoffTime.getHours() - 24);
+
+      const pendingCutoffTime = new Date();
+      pendingCutoffTime.setMinutes(pendingCutoffTime.getMinutes() - 30);
+
+      const deletedBookings = await prisma.$transaction(async (tx) => {
+        // Find expired DRAFT bookings (older than 24 hours)
+        const expiredDraftBookings = await tx.booking.findMany({
+          where: {
+            status: "DRAFT",
+            createdAt: { lt: draftCutoffTime },
+            bookingType: "HOTEL",
+          },
+          include: {
+            hotelBooking: true,
+            payment: true,
+          },
+        });
+
+        // Find abandoned PENDING bookings (older than 30 minutes without successful payment)
+        const abandonedPendingBookings = await tx.booking.findMany({
+          where: {
+            status: "PENDING",
+            createdAt: { lt: pendingCutoffTime },
+            bookingType: "HOTEL",
+            OR: [
+              { payment: null }, // No payment record
+              { payment: { paymentStatus: { not: "SUCCESS" } } }, // Failed or pending payment
+            ],
+          },
+          include: {
+            hotelBooking: true,
+            payment: true,
+          },
+        });
+
+        const allExpiredBookings = [
+          ...expiredDraftBookings,
+          ...abandonedPendingBookings,
+        ];
+
+        // Delete related records
+        for (const booking of allExpiredBookings) {
+          // Delete hotel bookings
+          await tx.hotelBooking.deleteMany({
+            where: { bookingId: booking.id },
+          });
+
+          // Delete payment records (if any)
+          if (booking.payment) {
+            await tx.payment.delete({
+              where: { bookingId: booking.id },
+            });
+          }
+
+          // Delete main booking
+          await tx.booking.delete({
+            where: { id: booking.id },
+          });
+        }
+
+        return {
+          total: allExpiredBookings.length,
+          draft: expiredDraftBookings.length,
+          pending: abandonedPendingBookings.length,
+          bookings: allExpiredBookings,
+        };
+      });
+
+      return ResponseUtils.success(res, "Abandoned bookings cleaned up", {
+        deletedCount: deletedBookings.total,
+        draftBookingsDeleted: deletedBookings.draft,
+        pendingBookingsDeleted: deletedBookings.pending,
+        deletedBookings: deletedBookings.bookings.map((b) => ({
+          id: b.id,
+          status: b.status,
+          createdAt: b.createdAt,
+          totalAmount: b.totalAmount,
+        })),
+      });
+    } catch (error) {
+      console.error("Cleanup abandoned bookings error:", error);
+      return ResponseUtils.serverError(
+        res,
+        "Failed to cleanup abandoned bookings"
+      );
+    }
+  }
+
   static async cleanupExpiredDraftBookings(req: Request, res: Response) {
     try {
       // Only allow admins to run this cleanup
@@ -1965,22 +2127,44 @@ export class HotelController {
     }
   }
 
-  // Utility method to automatically clean up expired DRAFT bookings (can be called by cron job)
+  // Utility method to automatically clean up expired DRAFT and abandoned PENDING bookings (can be called by cron job)
   static async autoCleanupExpiredDraftBookings() {
     try {
-      const cutoffTime = new Date();
-      cutoffTime.setHours(cutoffTime.getHours() - 24);
+      const draftCutoffTime = new Date();
+      draftCutoffTime.setHours(draftCutoffTime.getHours() - 24);
+
+      const pendingCutoffTime = new Date();
+      pendingCutoffTime.setMinutes(pendingCutoffTime.getMinutes() - 30);
 
       const result = await prisma.$transaction(async (tx) => {
-        const expiredBookings = await tx.booking.findMany({
+        // Find expired DRAFT bookings (older than 24 hours)
+        const expiredDraftBookings = await tx.booking.findMany({
           where: {
             status: "DRAFT",
-            createdAt: { lt: cutoffTime },
+            createdAt: { lt: draftCutoffTime },
             bookingType: "HOTEL",
           },
         });
 
-        for (const booking of expiredBookings) {
+        // Find abandoned PENDING bookings (older than 30 minutes without successful payment)
+        const abandonedPendingBookings = await tx.booking.findMany({
+          where: {
+            status: "PENDING",
+            createdAt: { lt: pendingCutoffTime },
+            bookingType: "HOTEL",
+            OR: [
+              { payment: null }, // No payment record
+              { payment: { paymentStatus: { not: "SUCCESS" } } }, // Failed or pending payment
+            ],
+          },
+        });
+
+        const allExpiredBookings = [
+          ...expiredDraftBookings,
+          ...abandonedPendingBookings,
+        ];
+
+        for (const booking of allExpiredBookings) {
           await tx.hotelBooking.deleteMany({
             where: { bookingId: booking.id },
           });
@@ -1994,16 +2178,20 @@ export class HotelController {
           });
         }
 
-        return expiredBookings;
+        return {
+          total: allExpiredBookings.length,
+          draft: expiredDraftBookings.length,
+          pending: abandonedPendingBookings.length,
+        };
       });
 
       console.log(
-        `Auto-cleanup: Removed ${result.length} expired DRAFT bookings`
+        `Auto-cleanup: Removed ${result.total} expired bookings (${result.draft} DRAFT, ${result.pending} abandoned PENDING)`
       );
       return result;
     } catch (error) {
       console.error("Auto cleanup error:", error);
-      return [];
+      return { total: 0, draft: 0, pending: 0 };
     }
   }
 }

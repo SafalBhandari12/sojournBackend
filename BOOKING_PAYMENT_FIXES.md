@@ -35,11 +35,15 @@
 
 ### 4. **Room Availability Logic - Fixed ✅**
 
-**Problem**: DRAFT bookings were blocking room availability
+**Problem**: DRAFT bookings were blocking room availability, and failed payments left PENDING bookings that permanently blocked rooms
 **Solution**:
 
 - Updated availability checks to exclude `DRAFT` bookings
-- Only `PENDING` and `CONFIRMED` bookings now block availability
+- Only `CONFIRMED` bookings always block availability  
+- `PENDING` bookings only block availability if:
+  - They have successful payments, OR
+  - They are less than 30 minutes old (grace period for payment completion)
+- Added automatic cleanup for abandoned PENDING bookings (older than 30 minutes without successful payment)
 - DRAFT bookings don't prevent room booking conflicts
 
 ## New Features Added
@@ -54,18 +58,28 @@
 ### 2. **Expired DRAFT Cleanup**
 
 - Added automatic cleanup for DRAFT bookings older than 24 hours
-- Admin endpoint: `POST /api/hotels/admin/cleanup-expired-drafts`
+- Added automatic cleanup for abandoned PENDING bookings older than 30 minutes without successful payment
+- Admin endpoint: `POST /api/hotels/admin/cleanup-abandoned-bookings` (cleans both DRAFT and abandoned PENDING)
+- Admin endpoint: `POST /api/hotels/admin/cleanup-expired-drafts` (cleans only DRAFT bookings)
+- Auto-cleanup utility method runs before each booking creation
 - Auto-cleanup utility method for cron jobs
 
 ### 3. **Enhanced Payment Flow**
 
 ```
-1. User creates booking → Status: DRAFT
-2. User initiates payment → Status: PENDING (room is now reserved)
-3. User completes payment → Status: CONFIRMED
-4. If payment fails → Status remains PENDING (can retry)
+1. User creates booking → Status: DRAFT (room available for others)
+2. User initiates payment → Status: PENDING (room reserved for 30 minutes)
+3. User completes payment → Status: CONFIRMED (room permanently reserved)
+4. If payment fails/cancelled → Booking deleted after 30 minutes (room becomes available)
 5. If no payment in 24hrs → DRAFT booking auto-deleted
 ```
+
+### 4. **Automatic Cleanup System**
+
+- **DRAFT bookings**: Deleted after 24 hours
+- **Failed PENDING bookings**: Deleted after 30 minutes if no successful payment
+- **Automatic execution**: Cleanup runs before each new booking creation
+- **Manual admin cleanup**: Available via API endpoints
 
 ## Database Changes
 
@@ -186,12 +200,14 @@ try {
 
 ## Benefits
 
-1. **No False Bookings**: Rooms only show as booked after payment initiation
-2. **Better UX**: Clear booking states for customers and vendors
-3. **Automatic Cleanup**: No orphaned bookings cluttering the database
-4. **Web-Optimized**: Proper Razorpay integration for web frontend
-5. **Race Condition Prevention**: Atomic transactions prevent booking conflicts
-6. **Better Error Handling**: Specific error messages for different scenarios
+1. **No False Bookings**: Rooms only show as booked when there's a confirmed payment or very recent payment attempt
+2. **Automatic Recovery**: Failed payments automatically free up rooms after 30 minutes
+3. **Better UX**: Clear booking states for customers and vendors with automatic cleanup
+4. **Automatic Cleanup**: No orphaned bookings cluttering the database
+5. **Web-Optimized**: Proper Razorpay integration for web frontend
+6. **Race Condition Prevention**: Atomic transactions prevent booking conflicts
+7. **Better Error Handling**: Specific error messages for different scenarios
+8. **Grace Period**: 30-minute window for users to complete payments before room becomes available again
 
 ## Deployment Notes
 
