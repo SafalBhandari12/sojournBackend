@@ -324,4 +324,11 @@ router.post("/payment-webhook", async (req: Request, res: Response) => {
   }
 });
 
+// Admin utility routes
+router.post(
+  "/admin/cleanup-expired-drafts",
+  authMiddleware,
+  hotelController.cleanupExpiredDraftBookings
+);
+
 export { router as hotelRoutes };

@@ -982,7 +982,7 @@ export class HotelController {
       const conflictingBookings = await prisma.hotelBooking.findMany({
         where: {
           roomId: room.id,
-          status: { in: ["PENDING", "CONFIRMED"] },
+          status: { in: ["PENDING", "CONFIRMED"] }, // Exclude DRAFT bookings from availability check
           AND: [
             {
               checkInDate: { lt: checkOut }, // Existing booking starts before new booking ends
@@ -1053,11 +1053,11 @@ export class HotelController {
           throw new Error("Check-in date cannot be in the past");
         }
 
-        // Check for conflicting bookings with more robust query
+        // Check for conflicting bookings with more robust query - exclude DRAFT bookings
         const conflictingBookings = await tx.hotelBooking.findMany({
           where: {
             roomId,
-            status: { in: ["PENDING", "CONFIRMED"] },
+            status: { in: ["PENDING", "CONFIRMED"] }, // Exclude DRAFT bookings from conflict check
             AND: [
               {
                 checkInDate: { lt: checkOut }, // Existing booking starts before new booking ends
@@ -1068,7 +1068,6 @@ export class HotelController {
             ],
           },
         });
-
         if (conflictingBookings.length > 0) {
           throw new Error(
             "Room is not available for selected dates. Another booking already exists for this period."
@@ -1096,7 +1095,7 @@ export class HotelController {
         const commissionRate = room.hotelProfile.vendor.commissionRate || 16;
         const commissionAmount = (totalAmount * commissionRate) / 100;
 
-        // Create booking within transaction
+        // Create booking within transaction - NOTE: Status is DRAFT until payment
         const booking = await tx.booking.create({
           data: {
             userId,
@@ -1104,11 +1103,11 @@ export class HotelController {
             bookingType: "HOTEL",
             totalAmount,
             commissionAmount,
-            status: "PENDING",
+            status: "DRAFT", // Changed from PENDING to DRAFT - only becomes PENDING after payment initiation
           },
         });
 
-        // Create hotel booking within transaction
+        // Create hotel booking within transaction - NOTE: Status is DRAFT until payment
         const hotelBooking = await tx.hotelBooking.create({
           data: {
             bookingId: booking.id,
@@ -1118,7 +1117,7 @@ export class HotelController {
             checkOutDate: checkOut,
             numberOfGuests,
             totalAmount,
-            status: "PENDING",
+            status: "DRAFT", // Changed from PENDING to DRAFT - only becomes PENDING after payment initiation
           },
           include: {
             booking: true,
@@ -1174,6 +1173,7 @@ export class HotelController {
           userId,
           bookingType: "HOTEL",
         },
+        status: { not: "DRAFT" }, // Exclude DRAFT bookings from customer view
       };
 
       if (status) {
@@ -1507,100 +1507,168 @@ export class HotelController {
         return ResponseUtils.badRequest(res, "Booking ID is required");
       }
 
-      const booking = await prisma.booking.findUnique({
-        where: { id: bookingId },
-        include: {
-          payment: true,
-          user: {
-            select: {
-              phoneNumber: true,
+      // Use transaction to ensure booking exists and update status atomically
+      const result = await prisma.$transaction(async (tx) => {
+        // Find booking with user verification
+        const booking = await tx.booking.findFirst({
+          where: {
+            id: bookingId,
+            userId: userId, // Ensure booking belongs to the user making payment
+          },
+          include: {
+            payment: true,
+            user: {
+              select: {
+                phoneNumber: true,
+              },
+            },
+            hotelBooking: {
+              include: {
+                hotelProfile: {
+                  select: {
+                    hotelName: true,
+                  },
+                },
+                room: {
+                  select: {
+                    roomType: true,
+                    roomNumber: true,
+                  },
+                },
+              },
             },
           },
-        },
-      });
+        });
 
-      if (!booking) {
-        return ResponseUtils.notFound(res, "Booking not found");
-      }
+        if (!booking) {
+          throw new Error("Booking not found or access denied");
+        }
 
-      if (booking.userId !== userId) {
-        return ResponseUtils.unauthorized(res, "Access denied");
-      }
+        // Check if booking is in correct status for payment
+        if (!["DRAFT", "PENDING"].includes(booking.status)) {
+          throw new Error(
+            `Cannot create payment for booking with status: ${booking.status}`
+          );
+        }
 
-      if (booking.payment && booking.payment.paymentStatus === "SUCCESS") {
-        return ResponseUtils.badRequest(
-          res,
-          "Payment already completed for this booking"
+        if (booking.payment && booking.payment.paymentStatus === "SUCCESS") {
+          throw new Error("Payment already completed for this booking");
+        }
+
+        // Create Razorpay order with comprehensive customer information
+        const orderOptions = {
+          amount: Math.round(booking.totalAmount * 100), // Convert to paise
+          currency: "INR",
+          receipt: `booking_${bookingId}_${Date.now()}`, // Add timestamp for uniqueness
+          notes: {
+            bookingId,
+            userId,
+            vendorId: booking.vendorId,
+            hotelName:
+              booking.hotelBooking?.[0]?.hotelProfile?.hotelName || "Hotel",
+            roomType: booking.hotelBooking?.[0]?.room?.roomType || "Room",
+          },
+        };
+
+        console.log("🔍 RAZORPAY ORDER OPTIONS:");
+        console.log("- Amount (paise):", orderOptions.amount);
+        console.log("- Currency:", orderOptions.currency);
+        console.log("- Receipt:", orderOptions.receipt);
+        console.log("- Notes:", orderOptions.notes);
+
+        const razorpayOrder = await razorpay.orders.create(orderOptions);
+        console.log(
+          "✅ Razorpay order created successfully:",
+          razorpayOrder.id
         );
-      }
 
-      // Create Razorpay order with customer information for better UPI/Card/Wallet support
-      const orderOptions = {
-        amount: Math.round(booking.totalAmount * 100), // Convert to paise
-        currency: "INR",
-        receipt: `booking_${bookingId}`,
-        notes: {
-          bookingId,
-          userId,
-          vendorId: booking.vendorId,
-        },
-        // Add customer details for better payment experience
-        customer: {
-          name: "Customer",
-          contact: booking.user?.phoneNumber || "+919999999999",
-          email: "customer@sojourn.com",
-        },
-      };
+        // Update booking status to PENDING when payment is initiated
+        await tx.booking.update({
+          where: { id: bookingId },
+          data: { status: "PENDING" },
+        });
 
-      console.log("🔍 RAZORPAY ORDER OPTIONS:");
-      console.log("- Amount (paise):", orderOptions.amount);
-      console.log("- Currency:", orderOptions.currency);
-      console.log("- Receipt:", orderOptions.receipt);
-      console.log("- Notes:", orderOptions.notes);
+        // Update hotel booking status to PENDING when payment is initiated
+        await tx.hotelBooking.updateMany({
+          where: { bookingId },
+          data: { status: "PENDING" },
+        });
 
-      const razorpayOrder = await razorpay.orders.create(orderOptions);
-      console.log("✅ Razorpay order created successfully:", razorpayOrder.id);
+        // Create or update payment record
+        const payment = await tx.payment.upsert({
+          where: { bookingId },
+          update: {
+            razorpayOrderId: razorpayOrder.id,
+            paymentStatus: "PENDING",
+          },
+          create: {
+            bookingId,
+            vendorId: booking.vendorId,
+            totalAmount: booking.totalAmount,
+            commissionAmount: booking.commissionAmount,
+            vendorAmount: booking.totalAmount - booking.commissionAmount,
+            paymentMethod: "RAZORPAY",
+            paymentStatus: "PENDING",
+            razorpayOrderId: razorpayOrder.id,
+          },
+        });
 
-      // Create or update payment record
-      const payment = await prisma.payment.upsert({
-        where: { bookingId },
-        update: {
-          razorpayOrderId: razorpayOrder.id,
-          paymentStatus: "PENDING",
-        },
-        create: {
-          bookingId,
-          vendorId: booking.vendorId,
-          totalAmount: booking.totalAmount,
-          commissionAmount: booking.commissionAmount,
-          vendorAmount: booking.totalAmount - booking.commissionAmount,
-          paymentMethod: "RAZORPAY",
-          paymentStatus: "PENDING",
-          razorpayOrderId: razorpayOrder.id,
-        },
+        return {
+          booking,
+          payment,
+          razorpayOrder,
+        };
       });
 
+      // Prepare response data optimized for web frontend with Razorpay
       const responseData = {
-        orderId: razorpayOrder.id,
-        amount: Math.round(booking.totalAmount * 100), // Send amount in paise to match Razorpay order
+        orderId: result.razorpayOrder.id,
+        amount: Math.round(result.booking.totalAmount * 100), // Amount in paise for Razorpay
         currency: "INR",
         key: process.env.RAZOR_PAY_KEY_ID,
-        // Add customer prefill data for better UX
+        name: "Sojourn", // Company name
+        description: `Hotel Booking - ${
+          result.booking.hotelBooking?.[0]?.hotelProfile?.hotelName || "Hotel"
+        }`,
+        image: "https://your-logo-url.com/logo.png", // Add your company logo URL
         prefill: {
           name: "Customer",
-          contact: booking.user?.phoneNumber || "",
           email: "customer@sojourn.com",
+          contact: result.booking.user?.phoneNumber || "",
         },
-        // Add theme and company details
         theme: {
-          color: "#F37254",
+          color: "#F37254", // Your brand color
         },
         modal: {
-          ondismiss: function() {
+          ondismiss: () => {
             console.log("Payment modal dismissed");
           },
         },
-        payment,
+        retry: {
+          enabled: true,
+          max_count: 3,
+        },
+        timeout: 900, // 15 minutes
+        remember_customer: false,
+        readonly: {
+          email: false,
+          contact: false,
+          name: false,
+        },
+        hidden: {
+          email: false,
+          contact: false,
+          name: false,
+        },
+        payment: result.payment,
+        booking: {
+          id: result.booking.id,
+          status: result.booking.status,
+          totalAmount: result.booking.totalAmount,
+          hotelName: result.booking.hotelBooking?.[0]?.hotelProfile?.hotelName,
+          roomType: result.booking.hotelBooking?.[0]?.room?.roomType,
+          roomNumber: result.booking.hotelBooking?.[0]?.room?.roomNumber,
+        },
       };
 
       console.log("🔍 PAYMENT ORDER RESPONSE:");
@@ -1608,6 +1676,7 @@ export class HotelController {
       console.log("- Amount (paise):", responseData.amount);
       console.log("- Currency:", responseData.currency);
       console.log("- Key:", responseData.key ? "✅ Present" : "❌ Missing");
+      console.log("- Booking Status Updated to:", result.booking.status);
 
       return ResponseUtils.success(
         res,
@@ -1616,6 +1685,26 @@ export class HotelController {
       );
     } catch (error) {
       console.error("Create payment order error:", error);
+
+      // Handle specific errors
+      if (error instanceof Error) {
+        if (
+          error.message.includes("not found") ||
+          error.message.includes("access denied")
+        ) {
+          return ResponseUtils.notFound(
+            res,
+            "Booking not found or access denied"
+          );
+        }
+        if (error.message.includes("Payment already completed")) {
+          return ResponseUtils.badRequest(res, error.message);
+        }
+        if (error.message.includes("Cannot create payment")) {
+          return ResponseUtils.badRequest(res, error.message);
+        }
+      }
+
       return ResponseUtils.serverError(res, "Failed to create payment order");
     }
   }
@@ -1785,85 +1874,118 @@ export class HotelController {
   }
 
   // ================================
-  // UTILITY METHODS
+  // DRAFT BOOKING CLEANUP
   // ================================
 
-  // Comprehensive room booking validation utility
-  private static async validateRoomBooking(
-    roomId: string,
-    checkInDate: Date,
-    checkOutDate: Date,
-    numberOfGuests: number,
-    excludeBookingId?: string
-  ): Promise<{ isValid: boolean; error?: string; room?: any }> {
+  static async cleanupExpiredDraftBookings(req: Request, res: Response) {
     try {
-      // Get room details
-      const room = await prisma.room.findUnique({
-        where: { id: roomId },
-        include: {
-          hotelProfile: {
-            include: {
-              vendor: true,
-            },
-          },
-        },
+      // Only allow admins to run this cleanup
+      const userId = AuthUtils.getUserIdFromToken(req);
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
       });
 
-      if (!room || !room.isAvailable) {
-        return { isValid: false, error: "Room not found or not available" };
+      if (!user || user.role !== "ADMIN") {
+        return ResponseUtils.unauthorized(res, "Only admins can run cleanup");
       }
 
-      if (room.capacity < numberOfGuests) {
-        return { isValid: false, error: "Room capacity exceeded" };
-      }
+      // Delete DRAFT bookings older than 24 hours
+      const cutoffTime = new Date();
+      cutoffTime.setHours(cutoffTime.getHours() - 24);
 
-      // Check date validity
-      if (checkInDate >= checkOutDate) {
-        return {
-          isValid: false,
-          error: "Check-out date must be after check-in date",
-        };
-      }
-
-      if (checkInDate < new Date()) {
-        return { isValid: false, error: "Check-in date cannot be in the past" };
-      }
-
-      // Check for conflicting bookings
-      const conflictQuery: any = {
-        roomId,
-        status: { in: ["PENDING", "CONFIRMED"] },
-        AND: [
-          {
-            checkInDate: { lt: checkOutDate }, // Existing booking starts before new booking ends
+      const deletedBookings = await prisma.$transaction(async (tx) => {
+        // Find expired DRAFT bookings
+        const expiredBookings = await tx.booking.findMany({
+          where: {
+            status: "DRAFT",
+            createdAt: { lt: cutoffTime },
+            bookingType: "HOTEL",
           },
-          {
-            checkOutDate: { gt: checkInDate }, // Existing booking ends after new booking starts
+          include: {
+            hotelBooking: true,
+            payment: true,
           },
-        ],
-      };
+        });
 
-      // Exclude current booking if updating
-      if (excludeBookingId) {
-        conflictQuery.bookingId = { not: excludeBookingId };
-      }
+        // Delete related records
+        for (const booking of expiredBookings) {
+          // Delete hotel bookings
+          await tx.hotelBooking.deleteMany({
+            where: { bookingId: booking.id },
+          });
 
-      const conflictingBookings = await prisma.hotelBooking.findMany({
-        where: conflictQuery,
+          // Delete payment records (if any)
+          if (booking.payment) {
+            await tx.payment.delete({
+              where: { bookingId: booking.id },
+            });
+          }
+
+          // Delete main booking
+          await tx.booking.delete({
+            where: { id: booking.id },
+          });
+        }
+
+        return expiredBookings;
       });
 
-      if (conflictingBookings.length > 0) {
-        return {
-          isValid: false,
-          error:
-            "Room is not available for selected dates. Another booking already exists for this period.",
-        };
-      }
-
-      return { isValid: true, room };
+      return ResponseUtils.success(res, "Expired DRAFT bookings cleaned up", {
+        deletedCount: deletedBookings.length,
+        deletedBookings: deletedBookings.map((b) => ({
+          id: b.id,
+          createdAt: b.createdAt,
+          totalAmount: b.totalAmount,
+        })),
+      });
     } catch (error) {
-      console.error("Room booking validation error:", error);
-      return { isValid: false, error: "Failed to validate room booking" };
+      console.error("Cleanup expired DRAFT bookings error:", error);
+      return ResponseUtils.serverError(
+        res,
+        "Failed to cleanup expired DRAFT bookings"
+      );
+    }
+  }
+
+  // Utility method to automatically clean up expired DRAFT bookings (can be called by cron job)
+  static async autoCleanupExpiredDraftBookings() {
+    try {
+      const cutoffTime = new Date();
+      cutoffTime.setHours(cutoffTime.getHours() - 24);
+
+      const result = await prisma.$transaction(async (tx) => {
+        const expiredBookings = await tx.booking.findMany({
+          where: {
+            status: "DRAFT",
+            createdAt: { lt: cutoffTime },
+            bookingType: "HOTEL",
+          },
+        });
+
+        for (const booking of expiredBookings) {
+          await tx.hotelBooking.deleteMany({
+            where: { bookingId: booking.id },
+          });
+
+          await tx.payment.deleteMany({
+            where: { bookingId: booking.id },
+          });
+
+          await tx.booking.delete({
+            where: { id: booking.id },
+          });
+        }
+
+        return expiredBookings;
+      });
+
+      console.log(
+        `Auto-cleanup: Removed ${result.length} expired DRAFT bookings`
+      );
+      return result;
+    } catch (error) {
+      console.error("Auto cleanup error:", error);
+      return [];
     }
   }
 }
