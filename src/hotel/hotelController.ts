@@ -1562,10 +1562,15 @@ export class HotelController {
         }
 
         // Create Razorpay order with comprehensive customer information
+        // Generate short receipt (max 40 chars) - use timestamp + last 8 chars of booking ID
+        const timestamp = Date.now().toString().slice(-8); // Last 8 digits of timestamp
+        const shortBookingId = bookingId.slice(-8); // Last 8 chars of booking ID
+        const receipt = `bk_${shortBookingId}_${timestamp}`; // Format: bk_12345678_87654321 (max 22 chars)
+        
         const orderOptions = {
           amount: Math.round(booking.totalAmount * 100), // Convert to paise
           currency: "INR",
-          receipt: `booking_${bookingId}_${Date.now()}`, // Add timestamp for uniqueness
+          receipt, // Shortened receipt under 40 characters
           notes: {
             bookingId,
             userId,

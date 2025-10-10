@@ -7,6 +7,7 @@ The error "Booking not found or access denied" was occurring because of a **book
 ### **The Problem**
 
 1. **Booking Creation** returns a `hotelBooking` object with this structure:
+
    ```json
    {
      "id": "cmgl9iarw0005bk27tlmb5x8z", // ← This is the HOTEL booking ID
@@ -17,6 +18,7 @@ The error "Booking not found or access denied" was occurring because of a **book
    ```
 
 2. **Frontend** uses the hotel booking ID (`cmgl9iarw0005bk27tlmb5x8z`) in the payment URL:
+
    ```
    /api/hotels/bookings/cmgl9iarw0005bk27tlmb5x8z/payment/create-order
    ```
@@ -28,7 +30,7 @@ The error "Booking not found or access denied" was occurring because of a **book
      where: {
        id: bookingId, // bookingId is actually the hotel booking ID
        userId: userId,
-     }
+     },
    });
    ```
 
@@ -86,7 +88,7 @@ await tx.booking.update({
   data: { status: "PENDING" },
 });
 
-// Update hotel booking status  
+// Update hotel booking status
 await tx.hotelBooking.update({
   where: { id: bookingId }, // ← Hotel booking ID
   data: { status: "PENDING" },
@@ -102,6 +104,7 @@ await tx.payment.upsert({
 ## 🔄 **Booking Flow Clarification**
 
 ### **Database Structure**
+
 ```
 User → Booking (Main) → Payment
        ↓
@@ -110,11 +113,13 @@ User → Booking (Main) → Payment
 ```
 
 ### **ID Usage**
+
 - **Frontend URLs**: Use `hotelBooking.id` (the hotel-specific booking ID)
 - **Payment Records**: Use `booking.id` (the main booking ID)
 - **Status Updates**: Update both booking tables with their respective IDs
 
 ### **API Flow**
+
 1. **Create Booking**: Returns `hotelBooking.id` to frontend
 2. **Payment URL**: Frontend uses `hotelBooking.id` in URL
 3. **Backend**: Finds `hotelBooking` → gets `booking` → processes payment
