@@ -39,7 +39,7 @@
 **Solution**:
 
 - Updated availability checks to exclude `DRAFT` bookings
-- Only `CONFIRMED` bookings always block availability  
+- Only `CONFIRMED` bookings always block availability
 - `PENDING` bookings only block availability if:
   - They have successful payments, OR
   - They are less than 30 minutes old (grace period for payment completion)

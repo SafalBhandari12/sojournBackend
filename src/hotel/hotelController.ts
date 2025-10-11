@@ -1301,6 +1301,18 @@ export class HotelController {
         hotelProfile: {
           vendorId: vendor.id,
         },
+        OR: [
+          { status: "CONFIRMED" }, // Always show confirmed bookings (payment completed)
+          { status: "CANCELLED" }, // Always show cancelled bookings
+          { status: "COMPLETED" }, // Always show completed bookings
+          {
+            // Only show PENDING bookings from the last 10 minutes (active payment attempts)
+            status: "PENDING",
+            createdAt: {
+              gt: new Date(Date.now() - 10 * 60 * 1000), // 10 minutes ago
+            },
+          },
+        ],
       };
 
       if (status) {
