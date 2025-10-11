@@ -17,6 +17,166 @@ const imagekit = new ImageKit({
   urlEndpoint: "https://ik.imagekit.io/sojourn",
 });
 
+// ================================
+// SECURITY UTILITIES - Data Sanitization
+// ================================
+
+class SecurityUtils {
+  // Mask phone number to show only last 2 digits
+  static maskPhoneNumber(phoneNumber: string, isOwner: boolean = false): string {
+    if (isOwner || !phoneNumber) return phoneNumber;
+    if (phoneNumber.length <= 2) return phoneNumber;
+    return '*'.repeat(phoneNumber.length - 2) + phoneNumber.slice(-2);
+  }
+
+  // Generate public-facing booking reference
+  static generatePublicBookingRef(bookingId: string): string {
+    // Create a short, non-enumerable reference
+    return `BK${bookingId.slice(-8).toUpperCase()}`;
+  }
+
+  // Clean payment data - remove sensitive fields
+  static sanitizePaymentData(payment: any, isOwner: boolean = false): any {
+    if (!payment) return null;
+    
+    // Base payment info for all users
+    const sanitized: any = {
+      paymentStatus: payment.paymentStatus,
+      paymentMethod: payment.paymentMethod,
+      totalAmount: payment.totalAmount,
+    };
+
+    // Add processed date if payment is successful
+    if (payment.paymentStatus === 'SUCCESS' && payment.processedAt) {
+      sanitized.processedAt = payment.processedAt;
+    }
+
+    // Only payment owner gets refund info
+    if (isOwner && payment.refundAmount) {
+      sanitized.refundAmount = payment.refundAmount;
+      sanitized.refundStatus = payment.paymentStatus === 'REFUNDED' ? 'REFUNDED' : null;
+    }
+
+    return sanitized;
+  }
+
+  // Clean vendor booking list
+  static sanitizeVendorBookingList(bookings: any[], vendorId: string): any[] {
+    return bookings.map(booking => ({
+      bookingRef: this.generatePublicBookingRef(booking.id),
+      status: booking.status,
+      checkInDate: booking.checkInDate,
+      checkOutDate: booking.checkOutDate,
+      numberOfGuests: booking.numberOfGuests,
+      totalAmount: booking.totalAmount,
+      createdAt: booking.createdAt,
+      customer: {
+        phoneNumber: this.maskPhoneNumber(booking.booking?.user?.phoneNumber || '', false),
+      },
+      room: {
+        type: booking.room?.roomType,
+        number: booking.room?.roomNumber,
+      },
+      payment: {
+        status: booking.booking?.payment?.paymentStatus || 'PENDING',
+        method: booking.booking?.payment?.paymentMethod,
+      },
+    }));
+  }
+
+  // Clean customer booking list
+  static sanitizeCustomerBookingList(bookings: any[], customerId: string): any[] {
+    return bookings.map(booking => ({
+      bookingRef: this.generatePublicBookingRef(booking.id),
+      status: booking.status,
+      checkInDate: booking.checkInDate,
+      checkOutDate: booking.checkOutDate,
+      numberOfGuests: booking.numberOfGuests,
+      totalAmount: booking.totalAmount,
+      createdAt: booking.createdAt,
+      hotel: {
+        name: booking.hotelProfile?.hotelName,
+        address: booking.hotelProfile?.vendor?.businessAddress,
+        contactNumbers: booking.hotelProfile?.vendor?.contactNumbers,
+      },
+      room: {
+        type: booking.room?.roomType,
+        number: booking.room?.roomNumber,
+        amenities: booking.room?.amenities,
+      },
+      payment: this.sanitizePaymentData(booking.booking?.payment, true),
+    }));
+  }
+
+  // Clean booking data based on user role
+  static sanitizeBookingData(booking: any, currentUserId: string, isVendor: boolean = false): any {
+    if (!booking) return null;
+
+    const isOwner = booking.booking?.userId === currentUserId;
+    const isAuthorizedVendor = isVendor && booking.booking?.vendorId;
+
+    // Base booking info
+    const sanitized: any = {
+      bookingRef: this.generatePublicBookingRef(booking.id),
+      status: booking.status,
+      checkInDate: booking.checkInDate,
+      checkOutDate: booking.checkOutDate,
+      numberOfGuests: booking.numberOfGuests,
+      totalAmount: booking.totalAmount,
+      createdAt: booking.createdAt,
+    };
+
+    // Hotel and room info (safe to expose)
+    if (booking.hotelProfile) {
+      sanitized.hotel = {
+        name: booking.hotelProfile.hotelName,
+        category: booking.hotelProfile.category,
+        address: booking.hotelProfile.vendor?.businessAddress,
+        contactNumbers: booking.hotelProfile.vendor?.contactNumbers,
+      };
+    }
+
+    if (booking.room) {
+      sanitized.room = {
+        type: booking.room.roomType,
+        number: booking.room.roomNumber,
+        capacity: booking.room.capacity,
+        amenities: booking.room.amenities,
+      };
+    }
+
+    // Customer info (different levels based on access)
+    if (booking.booking?.user) {
+      if (isOwner) {
+        // Owner sees their own full details
+        sanitized.customer = {
+          phoneNumber: booking.booking.user.phoneNumber,
+        };
+      } else if (isAuthorizedVendor) {
+        // Vendor sees masked customer info
+        sanitized.customer = {
+          phoneNumber: this.maskPhoneNumber(booking.booking.user.phoneNumber, false),
+        };
+      }
+    }
+
+    // Payment info (sanitized)
+    if (booking.booking?.payment) {
+      sanitized.payment = this.sanitizePaymentData(booking.booking.payment, isOwner);
+    }
+
+    // Vendor info (only for customers)
+    if (isOwner && booking.hotelProfile?.vendor) {
+      sanitized.vendor = {
+        businessName: booking.hotelProfile.vendor.businessName,
+        contactNumbers: booking.hotelProfile.vendor.contactNumbers,
+      };
+    }
+
+    return sanitized;
+  }
+}
+
 // Simple response utilities
 class ResponseUtils {
   static success(res: Response, message: string, data?: any) {
@@ -1417,7 +1577,15 @@ export class HotelController {
         include: {
           booking: {
             include: {
-              payment: true,
+              payment: {
+                select: {
+                  paymentStatus: true,
+                  paymentMethod: true,
+                  totalAmount: true,
+                  processedAt: true,
+                  refundAmount: true,
+                },
+              },
             },
           },
           hotelProfile: {
@@ -1431,15 +1599,25 @@ export class HotelController {
               },
             },
           },
-          room: true,
+          room: {
+            select: {
+              roomType: true,
+              roomNumber: true,
+              capacity: true,
+              amenities: true,
+            },
+          },
         },
         orderBy: { createdAt: "desc" },
       });
 
       const total = await prisma.hotelBooking.count({ where });
 
+      // Sanitize the booking data for customer view
+      const sanitizedBookings = SecurityUtils.sanitizeCustomerBookingList(bookings, userId);
+
       return ResponseUtils.success(res, "Bookings retrieved successfully", {
-        bookings,
+        bookings: sanitizedBookings,
         pagination: {
           page: Number(page),
           limit: Number(limit),
@@ -1456,7 +1634,7 @@ export class HotelController {
   static async getVendorBookings(req: Request, res: Response) {
     try {
       const userId = AuthUtils.getUserIdFromToken(req);
-      const { status, page = 1, limit = 10 } = req.query;
+      const { status, page = 1, limit = 10, search } = req.query;
 
       const vendor = await VendorDbUtils.findVendorByUserId(userId);
       if (!vendor) {
@@ -1472,6 +1650,10 @@ export class HotelController {
         hotelProfile: {
           vendorId: vendor.id,
         },
+      };
+
+      // Base status filter
+      const statusFilter = {
         OR: [
           { status: "CONFIRMED" }, // Always show confirmed bookings (payment completed)
           { status: "CANCELLED" }, // Always show cancelled bookings
@@ -1488,6 +1670,33 @@ export class HotelController {
 
       if (status) {
         where.status = status;
+      } else {
+        // Apply default status filter only if no specific status is requested
+        where.OR = statusFilter.OR;
+      }
+
+      // Add search functionality
+      if (search) {
+        const searchTerm = search as string;
+        // Combine status filter with search conditions
+        where.AND = [
+          statusFilter,
+          {
+            OR: [
+              { id: { contains: searchTerm, mode: "insensitive" } },
+              { booking: { 
+                user: { 
+                  phoneNumber: { contains: searchTerm, mode: "insensitive" } 
+                } 
+              }},
+              { room: { 
+                roomNumber: { contains: searchTerm, mode: "insensitive" } 
+              }},
+            ],
+          },
+        ];
+        // Remove the OR from the top level since we're using AND
+        delete where.OR;
       }
 
       const bookings = await prisma.hotelBooking.findMany({
@@ -1502,22 +1711,44 @@ export class HotelController {
                   phoneNumber: true,
                 },
               },
-              payment: true,
+              payment: {
+                select: {
+                  paymentStatus: true,
+                  paymentMethod: true,
+                  totalAmount: true,
+                  processedAt: true,
+                  refundAmount: true,
+                },
+              },
             },
           },
-          hotelProfile: true,
-          room: true,
+          hotelProfile: {
+            select: {
+              hotelName: true,
+              category: true,
+            },
+          },
+          room: {
+            select: {
+              roomType: true,
+              roomNumber: true,
+              capacity: true,
+            },
+          },
         },
         orderBy: { createdAt: "desc" },
       });
 
       const total = await prisma.hotelBooking.count({ where });
 
+      // Sanitize the booking data for vendor view
+      const sanitizedBookings = SecurityUtils.sanitizeVendorBookingList(bookings, vendor.id);
+
       return ResponseUtils.success(
         res,
         "Vendor bookings retrieved successfully",
         {
-          bookings,
+          bookings: sanitizedBookings,
           pagination: {
             page: Number(page),
             limit: Number(limit),
@@ -1535,6 +1766,107 @@ export class HotelController {
     }
   }
 
+  static async searchVendorBookingById(req: Request, res: Response) {
+    try {
+      const userId = AuthUtils.getUserIdFromToken(req);
+      const { bookingId } = req.params;
+
+      if (!bookingId) {
+        return ResponseUtils.badRequest(res, "Booking ID is required");
+      }
+
+      const vendor = await VendorDbUtils.findVendorByUserId(userId);
+      if (!vendor) {
+        return ResponseUtils.unauthorized(
+          res,
+          "Only vendors can search bookings"
+        );
+      }
+
+      // Search by hotel booking ID or main booking ID
+      let hotelBooking = await prisma.hotelBooking.findFirst({
+        where: {
+          AND: [
+            {
+              OR: [
+                { id: bookingId }, // Direct hotel booking ID match
+                { booking: { id: bookingId } }, // Main booking ID match
+              ],
+            },
+            {
+              hotelProfile: {
+                vendorId: vendor.id, // Ensure it belongs to this vendor
+              },
+            },
+            {
+              OR: [
+                { status: "CONFIRMED" },
+                { status: "CANCELLED" },
+                { status: "COMPLETED" },
+                {
+                  status: "PENDING",
+                  createdAt: {
+                    gt: new Date(Date.now() - 10 * 60 * 1000), // Recent PENDING bookings only
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        include: {
+          booking: {
+            include: {
+              user: {
+                select: {
+                  phoneNumber: true,
+                },
+              },
+              payment: {
+                select: {
+                  paymentStatus: true,
+                  paymentMethod: true,
+                  totalAmount: true,
+                  processedAt: true,
+                  refundAmount: true,
+                },
+              },
+            },
+          },
+          hotelProfile: {
+            select: {
+              hotelName: true,
+              category: true,
+            },
+          },
+          room: {
+            select: {
+              roomType: true,
+              roomNumber: true,
+              capacity: true,
+              amenities: true,
+            },
+          },
+        },
+      });
+
+      if (!hotelBooking) {
+        return ResponseUtils.notFound(res, "Booking not found or access denied");
+      }
+
+      // Sanitize the booking data for vendor view
+      const sanitizedBooking = SecurityUtils.sanitizeBookingData(hotelBooking, userId, true);
+
+      return ResponseUtils.success(
+        res,
+        "Booking found successfully",
+        sanitizedBooking
+      );
+    } catch (error) {
+      console.error("Search vendor booking by ID error:", error);
+      return ResponseUtils.serverError(res, "Failed to search booking");
+    }
+  }
+
   static async getBookingDetails(req: Request, res: Response) {
     try {
       const userId = AuthUtils.getUserIdFromToken(req);
@@ -1544,47 +1876,129 @@ export class HotelController {
         return ResponseUtils.badRequest(res, "Booking ID is required");
       }
 
-      const booking = await prisma.booking.findUnique({
+      // First try to find by hotel booking ID (most common case)
+      let hotelBooking = await prisma.hotelBooking.findUnique({
         where: { id: bookingId },
         include: {
-          user: {
-            select: {
-              phoneNumber: true,
-            },
-          },
-          vendor: {
-            select: {
-              businessName: true,
-              contactNumbers: true,
-            },
-          },
-          hotelBooking: {
+          booking: {
             include: {
-              hotelProfile: true,
-              room: true,
+              user: {
+                select: {
+                  phoneNumber: true,
+                },
+              },
+              payment: {
+                select: {
+                  paymentStatus: true,
+                  paymentMethod: true,
+                  totalAmount: true,
+                  processedAt: true,
+                  refundAmount: true,
+                },
+              },
             },
           },
-          payment: true,
+          hotelProfile: {
+            include: {
+              vendor: {
+                select: {
+                  businessName: true,
+                  businessAddress: true,
+                  contactNumbers: true,
+                },
+              },
+            },
+          },
+          room: {
+            select: {
+              roomType: true,
+              roomNumber: true,
+              capacity: true,
+              amenities: true,
+            },
+          },
         },
       });
 
-      if (!booking) {
+      // If not found, try to find by main booking ID
+      if (!hotelBooking) {
+        const booking = await prisma.booking.findUnique({
+          where: { id: bookingId },
+          include: {
+            hotelBooking: {
+              include: {
+                hotelProfile: {
+                  include: {
+                    vendor: {
+                      select: {
+                        businessName: true,
+                        businessAddress: true,
+                        contactNumbers: true,
+                      },
+                    },
+                  },
+                },
+                room: {
+                  select: {
+                    roomType: true,
+                    roomNumber: true,
+                    capacity: true,
+                    amenities: true,
+                  },
+                },
+              },
+            },
+            user: {
+              select: {
+                phoneNumber: true,
+              },
+            },
+            payment: {
+              select: {
+                paymentStatus: true,
+                paymentMethod: true,
+                totalAmount: true,
+                processedAt: true,
+                refundAmount: true,
+              },
+            },
+          },
+        });
+
+        if (booking?.hotelBooking?.[0]) {
+          // Transform to match hotelBooking structure
+          const firstHotelBooking = booking.hotelBooking[0];
+          hotelBooking = {
+            ...firstHotelBooking,
+            booking: booking as any, // Cast to avoid type issues - will be sanitized anyway
+          };
+        }
+      }
+
+      if (!hotelBooking) {
         return ResponseUtils.notFound(res, "Booking not found");
       }
 
       // Check if user has access to this booking
-      if (booking.userId !== userId) {
+      const isCustomer = hotelBooking.booking.userId === userId;
+      let isVendor = false;
+
+      if (!isCustomer) {
         // Check if user is the vendor
         const vendor = await VendorDbUtils.findVendorByUserId(userId);
-        if (!vendor || booking.vendorId !== vendor.id) {
+        if (!vendor || hotelBooking.booking.vendorId !== vendor.id) {
           return ResponseUtils.unauthorized(res, "Access denied");
         }
+        isVendor = true;
       }
+
+      // Sanitize the booking data based on user role
+      const sanitizedBooking = SecurityUtils.sanitizeBookingData(hotelBooking, userId, isVendor);
 
       return ResponseUtils.success(
         res,
         "Booking details retrieved successfully",
-        booking
+        sanitizedBooking
       );
     } catch (error) {
       console.error("Get booking details error:", error);
@@ -2377,6 +2791,7 @@ export class HotelController {
       return { total: 0, draft: 0, pending: 0 };
     }
   }
+
 }
 
 export const hotelController = HotelController;

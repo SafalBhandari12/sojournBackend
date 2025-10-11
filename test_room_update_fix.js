@@ -3,23 +3,23 @@
 
 const testUpdateRoomData = {
   roomType: "STANDARD",
-  roomNumber: "1", 
+  roomNumber: "1",
   capacity: 2,
   basePrice: 1,
   summerPrice: 1,
   winterPrice: 1,
   amenities: ["tv", "ac", "wifi", "bathroom", "chair"],
   descriptions: ["Image 1", "Image 2"], // This should be filtered out
-  isPrimary: ["false", "false"],        // This should be filtered out
-  imageType: "room"                     // This should be filtered out
+  isPrimary: ["false", "false"], // This should be filtered out
+  imageType: "room", // This should be filtered out
 };
 
 // Simulate the fix: Filter out image-related fields
-const { 
-  imageType = "room", 
-  descriptions, 
-  isPrimary, 
-  ...updateData 
+const {
+  imageType = "room",
+  descriptions,
+  isPrimary,
+  ...updateData
 } = testUpdateRoomData;
 
 console.log("✅ Original data (with image fields):");
