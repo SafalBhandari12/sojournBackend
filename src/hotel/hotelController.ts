@@ -449,75 +449,137 @@ export class HotelController {
         );
       }
 
-      const room = await prisma.room.create({
-        data: {
-          hotelProfileId: hotelProfile.id,
-          roomType,
-          roomNumber,
-          capacity,
-          basePrice,
-          summerPrice,
-          winterPrice,
-          amenities,
-        },
-      });
+      // Check for duplicate room number in the same hotel
+      if (roomNumber) {
+        const existingRoom = await prisma.room.findFirst({
+          where: {
+            hotelProfileId: hotelProfile.id,
+            roomNumber,
+          },
+        });
 
-      // Handle image uploads from multer files
-      const uploadedImages = [];
-      const files = req.files as Express.Multer.File[];
-
-      if (files && files.length > 0) {
-        for (let i = 0; i < files.length; i++) {
-          const file = files[i];
-          if (!file) continue;
-
-          const description = Array.isArray(req.body.descriptions)
-            ? req.body.descriptions[i]
-            : req.body.descriptions ||
-              `Room ${roomNumber || roomType} image ${i + 1}`;
-          const isPrimary = Array.isArray(req.body.isPrimary)
-            ? req.body.isPrimary[i] === "true"
-            : i === 0; // First image is primary by default
-
-          try {
-            // Upload to ImageKit
-            const result = await imagekit.upload({
-              file: file.buffer,
-              fileName:
-                file.originalname || `room_${room.id}_${Date.now()}_${i}`,
-              folder: `/hotels/${vendor.id}/rooms`,
-              useUniqueFileName: true,
-            });
-
-            // Save to database
-            const vendorImage = await prisma.vendorImage.create({
-              data: {
-                vendorId: vendor.id,
-                imageUrl: result.url,
-                imageType,
-                description,
-                isPrimary,
-                roomId: room.id, // Associate with the room
-              },
-            });
-
-            uploadedImages.push({
-              ...vendorImage,
-              fileId: result.fileId,
-              thumbnailUrl: result.thumbnailUrl,
-            });
-          } catch (uploadError) {
-            console.error("Image upload error:", uploadError);
-          }
+        if (existingRoom) {
+          return ResponseUtils.badRequest(
+            res,
+            `Room number ${roomNumber} already exists in this hotel`
+          );
         }
       }
 
+      // Handle room creation and image uploads in a transaction
+      const result = await prisma.$transaction(async (tx) => {
+        const room = await tx.room.create({
+          data: {
+            hotelProfileId: hotelProfile.id,
+            roomType,
+            roomNumber,
+            capacity,
+            basePrice,
+            summerPrice,
+            winterPrice,
+            amenities,
+          },
+        });
+
+        // Handle image uploads from multer files
+        const uploadedImages = [];
+        const files = req.files as Express.Multer.File[];
+        const imageUploadErrors = [];
+
+        if (files && files.length > 0) {
+          for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            if (!file) continue;
+
+            const description = Array.isArray(req.body.descriptions)
+              ? req.body.descriptions[i]
+              : req.body.descriptions ||
+                `Room ${roomNumber || roomType} image ${i + 1}`;
+            const isPrimary = Array.isArray(req.body.isPrimary)
+              ? req.body.isPrimary[i] === "true"
+              : i === 0; // First image is primary by default
+
+            try {
+              // Upload to ImageKit
+              const uploadResult = await imagekit.upload({
+                file: file.buffer,
+                fileName:
+                  file.originalname || `room_${room.id}_${Date.now()}_${i}`,
+                folder: `/hotels/${vendor.id}/rooms`,
+                useUniqueFileName: true,
+              });
+
+              // Save to database
+              const vendorImage = await tx.vendorImage.create({
+                data: {
+                  vendorId: vendor.id,
+                  imageUrl: uploadResult.url,
+                  imageType,
+                  description,
+                  isPrimary,
+                  roomId: room.id, // Associate with the room
+                },
+              });
+
+              uploadedImages.push({
+                ...vendorImage,
+                fileId: uploadResult.fileId,
+                thumbnailUrl: uploadResult.thumbnailUrl,
+              });
+            } catch (uploadError) {
+              console.error("Image upload error:", uploadError);
+              imageUploadErrors.push({
+                index: i,
+                fileName: file.originalname,
+                error:
+                  uploadError instanceof Error
+                    ? uploadError.message
+                    : "Unknown upload error",
+              });
+            }
+          }
+        }
+
+        return {
+          room,
+          uploadedImages,
+          imageUploadErrors,
+        };
+      });
+
+      // If there were image upload errors, include them in the response
+      if (result.imageUploadErrors.length > 0) {
+        return ResponseUtils.success(
+          res,
+          "Room added successfully with some image upload errors",
+          {
+            ...result.room,
+            uploadedImages: result.uploadedImages,
+            imageErrors: result.imageUploadErrors,
+          }
+        );
+      }
+
       return ResponseUtils.success(res, "Room added successfully", {
-        ...room,
-        uploadedImages,
+        ...result.room,
+        uploadedImages: result.uploadedImages,
       });
     } catch (error) {
       console.error("Add room error:", error);
+
+      // Provide more specific error messages
+      if (error instanceof Error) {
+        if (error.message.includes("ImageKit")) {
+          return ResponseUtils.serverError(res, "Image upload service error");
+        }
+        if (error.message.includes("Prisma")) {
+          return ResponseUtils.serverError(
+            res,
+            "Database error during room creation"
+          );
+        }
+      }
+
       return ResponseUtils.serverError(res, "Failed to add room");
     }
   }
@@ -553,67 +615,135 @@ export class HotelController {
         return ResponseUtils.notFound(res, "Room not found");
       }
 
-      const updatedRoom = await prisma.room.update({
-        where: { id: roomId },
-        data: updateData,
-      });
+      // Handle room update and image uploads in a transaction
+      const result = await prisma.$transaction(async (tx) => {
+        // Update room data
+        const updatedRoom = await tx.room.update({
+          where: { id: roomId },
+          data: updateData,
+        });
 
-      // Handle image uploads from multer files
-      const uploadedImages = [];
-      const files = req.files as Express.Multer.File[];
+        // Handle image uploads from multer files
+        const uploadedImages = [];
+        const files = req.files as Express.Multer.File[];
+        const imageUploadErrors = [];
 
-      if (files && files.length > 0) {
-        for (let i = 0; i < files.length; i++) {
-          const file = files[i];
-          if (!file) continue;
+        if (files && files.length > 0) {
+          // Check if any of the new images should be primary
+          const hasPrimaryInRequest = Array.isArray(req.body.isPrimary)
+            ? req.body.isPrimary.some((p: string) => p === "true")
+            : req.body.isPrimary === "true";
 
-          const description = Array.isArray(req.body.descriptions)
-            ? req.body.descriptions[i]
-            : req.body.descriptions ||
-              `Room ${room.roomNumber || room.roomType} updated image ${i + 1}`;
-          const isPrimary = Array.isArray(req.body.isPrimary)
-            ? req.body.isPrimary[i] === "true"
-            : false;
-
-          try {
-            // Upload to ImageKit
-            const result = await imagekit.upload({
-              file: file.buffer,
-              fileName:
-                file.originalname || `room_${roomId}_update_${Date.now()}_${i}`,
-              folder: `/hotels/${vendor.id}/rooms`,
-              useUniqueFileName: true,
-            });
-
-            // Save to database
-            const vendorImage = await prisma.vendorImage.create({
+          // If setting a new primary image, update existing ones to non-primary
+          if (hasPrimaryInRequest) {
+            await tx.vendorImage.updateMany({
+              where: {
+                roomId: roomId,
+                isPrimary: true,
+              },
               data: {
-                vendorId: vendor.id,
-                imageUrl: result.url,
-                imageType,
-                description,
-                isPrimary,
-                roomId: roomId, // Associate with the room
+                isPrimary: false,
               },
             });
+          }
 
-            uploadedImages.push({
-              ...vendorImage,
-              fileId: result.fileId,
-              thumbnailUrl: result.thumbnailUrl,
-            });
-          } catch (uploadError) {
-            console.error("Image upload error:", uploadError);
+          for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            if (!file) continue;
+
+            const description = Array.isArray(req.body.descriptions)
+              ? req.body.descriptions[i]
+              : req.body.descriptions ||
+                `Room ${room.roomNumber || room.roomType} updated image ${
+                  i + 1
+                }`;
+
+            const isPrimary = Array.isArray(req.body.isPrimary)
+              ? req.body.isPrimary[i] === "true"
+              : req.body.isPrimary === "true" && i === 0; // Only first image can be primary if single value
+
+            try {
+              // Upload to ImageKit
+              const uploadResult = await imagekit.upload({
+                file: file.buffer,
+                fileName:
+                  file.originalname ||
+                  `room_${roomId}_update_${Date.now()}_${i}`,
+                folder: `/hotels/${vendor.id}/rooms`,
+                useUniqueFileName: true,
+              });
+
+              // Save to database
+              const vendorImage = await tx.vendorImage.create({
+                data: {
+                  vendorId: vendor.id,
+                  imageUrl: uploadResult.url,
+                  imageType,
+                  description,
+                  isPrimary,
+                  roomId: roomId, // Associate with the room
+                },
+              });
+
+              uploadedImages.push({
+                ...vendorImage,
+                fileId: uploadResult.fileId,
+                thumbnailUrl: uploadResult.thumbnailUrl,
+              });
+            } catch (uploadError) {
+              console.error("Image upload error:", uploadError);
+              imageUploadErrors.push({
+                index: i,
+                fileName: file.originalname,
+                error:
+                  uploadError instanceof Error
+                    ? uploadError.message
+                    : "Unknown upload error",
+              });
+            }
           }
         }
+
+        return {
+          room: updatedRoom,
+          uploadedImages,
+          imageUploadErrors,
+        };
+      });
+
+      // If there were image upload errors, include them in the response
+      if (result.imageUploadErrors.length > 0) {
+        return ResponseUtils.success(
+          res,
+          "Room updated successfully with some image upload errors",
+          {
+            ...result.room,
+            uploadedImages: result.uploadedImages,
+            imageErrors: result.imageUploadErrors,
+          }
+        );
       }
 
       return ResponseUtils.success(res, "Room updated successfully", {
-        ...updatedRoom,
-        uploadedImages,
+        ...result.room,
+        uploadedImages: result.uploadedImages,
       });
     } catch (error) {
       console.error("Update room error:", error);
+
+      // Provide more specific error messages
+      if (error instanceof Error) {
+        if (error.message.includes("ImageKit")) {
+          return ResponseUtils.serverError(res, "Image upload service error");
+        }
+        if (error.message.includes("Prisma")) {
+          return ResponseUtils.serverError(
+            res,
+            "Database error during room update"
+          );
+        }
+      }
+
       return ResponseUtils.serverError(res, "Failed to update room");
     }
   }
@@ -674,6 +804,7 @@ export class HotelController {
   static async getVendorRooms(req: Request, res: Response) {
     try {
       const userId = AuthUtils.getUserIdFromToken(req);
+      const { page = 1, limit = 10 } = req.query;
 
       const vendor = await VendorDbUtils.findVendorByUserId(userId);
       if (!vendor) {
@@ -682,29 +813,64 @@ export class HotelController {
 
       const hotelProfile = await prisma.hotelProfile.findUnique({
         where: { vendorId: vendor.id },
-        include: {
-          rooms: {
-            orderBy: { createdAt: "desc" },
-            include: {
-              bookings: {
-                where: {
-                  status: { in: ["PENDING", "CONFIRMED"] },
-                },
-              },
-            },
-          },
-        },
       });
 
       if (!hotelProfile) {
         return ResponseUtils.notFound(res, "Hotel profile not found");
       }
 
-      return ResponseUtils.success(
-        res,
-        "Rooms retrieved successfully",
-        hotelProfile.rooms
-      );
+      const skip = (Number(page) - 1) * Number(limit);
+
+      // Get rooms with pagination and images, but without booking details
+      const rooms = await prisma.room.findMany({
+        where: {
+          hotelProfileId: hotelProfile.id,
+        },
+        skip,
+        take: Number(limit),
+        include: {
+          images: {
+            orderBy: [
+              { isPrimary: "desc" }, // Primary images first
+              { uploadedAt: "desc" }, // Then by upload date
+            ],
+          },
+          _count: {
+            select: {
+              bookings: {
+                where: {
+                  status: { in: ["PENDING", "CONFIRMED"] }, // Count only active bookings
+                },
+              },
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
+      // Get total count for pagination
+      const total = await prisma.room.count({
+        where: {
+          hotelProfileId: hotelProfile.id,
+        },
+      });
+
+      // Transform the response to include useful booking statistics without exposing details
+      const transformedRooms = rooms.map((room) => ({
+        ...room,
+        activeBookingsCount: room._count.bookings,
+        _count: undefined, // Remove the _count field from response
+      }));
+
+      return ResponseUtils.success(res, "Rooms retrieved successfully", {
+        rooms: transformedRooms,
+        pagination: {
+          page: Number(page),
+          limit: Number(limit),
+          total,
+          totalPages: Math.ceil(total / Number(limit)),
+        },
+      });
     } catch (error) {
       console.error("Get rooms error:", error);
       return ResponseUtils.serverError(res, "Failed to retrieve rooms");
