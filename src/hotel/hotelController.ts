@@ -591,7 +591,12 @@ export class HotelController {
 
       // Use validated data from middleware
       const validatedBody = req.validatedData?.body;
-      const { imageType = "room", ...updateData } = validatedBody || req.body;
+      const {
+        imageType = "room",
+        descriptions,
+        isPrimary,
+        ...updateData
+      } = validatedBody || req.body;
 
       if (!roomId) {
         return ResponseUtils.badRequest(res, "Room ID is required");

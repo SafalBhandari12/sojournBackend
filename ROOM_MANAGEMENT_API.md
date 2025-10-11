@@ -188,7 +188,7 @@ All fields are optional for updates:
 
 ```javascript
 {
-  // Optional Room Details
+  // Optional Room Details (these update the room record)
   "roomType": "SUITE",            // STANDARD | DELUXE | SUITE | DORMITORY
   "roomNumber": "102",            // String (max 50 chars)
   "capacity": 4,                  // Number >= 1
@@ -197,15 +197,17 @@ All fields are optional for updates:
   "winterPrice": 3000,            // Number >= 0
   "amenities": ["WiFi", "AC", "TV", "Balcony"], // Array or comma-separated
   "isAvailable": true,            // Boolean
-  "imageType": "room",            // property | room | amenity | food
 
-  // Image Upload Fields (for new images)
+  // Image Upload Fields (these are for new images only)
+  "imageType": "room",            // property | room | amenity | food
   "descriptions": ["Updated room view"], // Array or single string
   "isPrimary": ["true"]           // Array or single string - sets new primary image
 }
 
 // Files: New image files to upload (optional)
 ```
+
+**Note**: `descriptions` and `isPrimary` are only used for new image uploads and are not stored with the room data itself. They are filtered out during room updates.
 
 #### Success Response
 
