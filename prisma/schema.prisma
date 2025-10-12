@@ -97,12 +97,20 @@ enum BookingStatus {
 // ================================
 
 model User {
-  id          String   @id @default(cuid())
-  phoneNumber String   @unique
-  role        UserRole @default(CUSTOMER)
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id             String   @id @default(cuid())
+  phoneNumber    String   @unique
+  role           UserRole @default(CUSTOMER)
+  isActive       Boolean  @default(true)
+  firstName      String?
+  lastName       String?
+  email          String?
+  dateOfBirth    DateTime?
+  address        String?
+  emergencyContact String?
+  idProofType    String?   // "AADHAR", "PASSPORT", "DRIVING_LICENSE", etc.
+  idProofNumber  String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   // OTP Management
   otps OTP[]
@@ -332,13 +340,37 @@ model HotelBooking {
   numberOfGuests Int
   totalAmount    Float
   status         BookingStatus @default(PENDING)
+  specialRequests String?      // Guest special requests/preferences
+  checkInNotes   String?      // Hotel check-in notes
   createdAt      DateTime      @default(now())
 
   booking      Booking      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   hotelProfile HotelProfile @relation(fields: [hotelProfileId], references: [id], onDelete: Cascade)
   room         Room         @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  guests       Guest[]      // Multiple guests per booking
 
   @@map("hotel_bookings")
+}
+
+// ================================
+// GUEST INFORMATION
+// ================================
+
+model Guest {
+  id              String   @id @default(cuid())
+  hotelBookingId  String
+  firstName       String
+  lastName        String
+  age             Int?
+  idProofType     String?  // "AADHAR", "PASSPORT", "DRIVING_LICENSE", etc.
+  idProofNumber   String?
+  isPrimaryGuest  Boolean  @default(false) // One primary guest per booking
+  specialRequests String?  // Individual guest preferences
+  createdAt       DateTime @default(now())
+
+  hotelBooking HotelBooking @relation(fields: [hotelBookingId], references: [id], onDelete: Cascade)
+
+  @@map("guests")
 }
 
 // ================================

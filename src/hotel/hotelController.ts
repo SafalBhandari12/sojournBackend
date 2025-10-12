@@ -23,10 +23,13 @@ const imagekit = new ImageKit({
 
 class SecurityUtils {
   // Mask phone number to show only last 2 digits
-  static maskPhoneNumber(phoneNumber: string, isOwner: boolean = false): string {
+  static maskPhoneNumber(
+    phoneNumber: string,
+    isOwner: boolean = false
+  ): string {
     if (isOwner || !phoneNumber) return phoneNumber;
     if (phoneNumber.length <= 2) return phoneNumber;
-    return '*'.repeat(phoneNumber.length - 2) + phoneNumber.slice(-2);
+    return "*".repeat(phoneNumber.length - 2) + phoneNumber.slice(-2);
   }
 
   // Generate public-facing booking reference
@@ -38,7 +41,7 @@ class SecurityUtils {
   // Clean payment data - remove sensitive fields
   static sanitizePaymentData(payment: any, isOwner: boolean = false): any {
     if (!payment) return null;
-    
+
     // Base payment info for all users
     const sanitized: any = {
       paymentStatus: payment.paymentStatus,
@@ -47,14 +50,15 @@ class SecurityUtils {
     };
 
     // Add processed date if payment is successful
-    if (payment.paymentStatus === 'SUCCESS' && payment.processedAt) {
+    if (payment.paymentStatus === "SUCCESS" && payment.processedAt) {
       sanitized.processedAt = payment.processedAt;
     }
 
     // Only payment owner gets refund info
     if (isOwner && payment.refundAmount) {
       sanitized.refundAmount = payment.refundAmount;
-      sanitized.refundStatus = payment.paymentStatus === 'REFUNDED' ? 'REFUNDED' : null;
+      sanitized.refundStatus =
+        payment.paymentStatus === "REFUNDED" ? "REFUNDED" : null;
     }
 
     return sanitized;
@@ -62,7 +66,7 @@ class SecurityUtils {
 
   // Clean vendor booking list
   static sanitizeVendorBookingList(bookings: any[], vendorId: string): any[] {
-    return bookings.map(booking => ({
+    return bookings.map((booking) => ({
       bookingRef: this.generatePublicBookingRef(booking.id),
       status: booking.status,
       checkInDate: booking.checkInDate,
@@ -70,23 +74,44 @@ class SecurityUtils {
       numberOfGuests: booking.numberOfGuests,
       totalAmount: booking.totalAmount,
       createdAt: booking.createdAt,
+      specialRequests: booking.specialRequests,
       customer: {
-        phoneNumber: this.maskPhoneNumber(booking.booking?.user?.phoneNumber || '', false),
+        phoneNumber: this.maskPhoneNumber(
+          booking.booking?.user?.phoneNumber || "",
+          false
+        ),
+        firstName: booking.booking?.user?.firstName || "N/A",
+        lastName: booking.booking?.user?.lastName || "N/A",
+        email: booking.booking?.user?.email || null,
+        emergencyContact: booking.booking?.user?.emergencyContact || null,
       },
+      guests:
+        booking.guests?.map((guest: any) => ({
+          firstName: guest.firstName,
+          lastName: guest.lastName,
+          age: guest.age,
+          isPrimaryGuest: guest.isPrimaryGuest,
+          specialRequests: guest.specialRequests,
+          // Hide sensitive ID proof information for vendors
+          hasIdProof: !!(guest.idProofType && guest.idProofNumber),
+        })) || [],
       room: {
         type: booking.room?.roomType,
         number: booking.room?.roomNumber,
       },
       payment: {
-        status: booking.booking?.payment?.paymentStatus || 'PENDING',
+        status: booking.booking?.payment?.paymentStatus || "PENDING",
         method: booking.booking?.payment?.paymentMethod,
       },
     }));
   }
 
   // Clean customer booking list
-  static sanitizeCustomerBookingList(bookings: any[], customerId: string): any[] {
-    return bookings.map(booking => ({
+  static sanitizeCustomerBookingList(
+    bookings: any[],
+    customerId: string
+  ): any[] {
+    return bookings.map((booking) => ({
       bookingRef: this.generatePublicBookingRef(booking.id),
       status: booking.status,
       checkInDate: booking.checkInDate,
@@ -94,6 +119,17 @@ class SecurityUtils {
       numberOfGuests: booking.numberOfGuests,
       totalAmount: booking.totalAmount,
       createdAt: booking.createdAt,
+      specialRequests: booking.specialRequests,
+      guests:
+        booking.guests?.map((guest: any) => ({
+          firstName: guest.firstName,
+          lastName: guest.lastName,
+          age: guest.age,
+          isPrimaryGuest: guest.isPrimaryGuest,
+          specialRequests: guest.specialRequests,
+          idProofType: guest.idProofType,
+          idProofNumber: guest.idProofNumber,
+        })) || [],
       hotel: {
         name: booking.hotelProfile?.hotelName,
         address: booking.hotelProfile?.vendor?.businessAddress,
@@ -109,7 +145,11 @@ class SecurityUtils {
   }
 
   // Clean booking data based on user role
-  static sanitizeBookingData(booking: any, currentUserId: string, isVendor: boolean = false): any {
+  static sanitizeBookingData(
+    booking: any,
+    currentUserId: string,
+    isVendor: boolean = false
+  ): any {
     if (!booking) return null;
 
     const isOwner = booking.booking?.userId === currentUserId;
@@ -124,7 +164,42 @@ class SecurityUtils {
       numberOfGuests: booking.numberOfGuests,
       totalAmount: booking.totalAmount,
       createdAt: booking.createdAt,
+      specialRequests: booking.specialRequests,
     };
+
+    // Guest information
+    if (booking.guests) {
+      sanitized.guests = booking.guests.map((guest: any) => {
+        const guestData = {
+          firstName: guest.firstName,
+          lastName: guest.lastName,
+          age: guest.age,
+          isPrimaryGuest: guest.isPrimaryGuest,
+          specialRequests: guest.specialRequests,
+        };
+
+        // Customer sees full guest details including ID proof
+        if (isOwner) {
+          return {
+            ...guestData,
+            idProofType: guest.idProofType,
+            idProofNumber: guest.idProofNumber,
+          };
+        }
+
+        // Vendor sees guest details but not full ID proof numbers
+        if (isAuthorizedVendor) {
+          return {
+            ...guestData,
+            hasIdProof: !!(guest.idProofType && guest.idProofNumber),
+            idProofType: guest.idProofType, // Show type but not number
+          };
+        }
+
+        // Others see limited guest info
+        return guestData;
+      });
+    }
 
     // Hotel and room info (safe to expose)
     if (booking.hotelProfile) {
@@ -151,18 +226,39 @@ class SecurityUtils {
         // Owner sees their own full details
         sanitized.customer = {
           phoneNumber: booking.booking.user.phoneNumber,
+          firstName: booking.booking.user.firstName,
+          lastName: booking.booking.user.lastName,
+          email: booking.booking.user.email,
+          emergencyContact: booking.booking.user.emergencyContact,
+          idProofType: booking.booking.user.idProofType,
+          idProofNumber: booking.booking.user.idProofNumber,
         };
       } else if (isAuthorizedVendor) {
-        // Vendor sees masked customer info
+        // Vendor sees enhanced customer info with privacy protection
         sanitized.customer = {
-          phoneNumber: this.maskPhoneNumber(booking.booking.user.phoneNumber, false),
+          phoneNumber: this.maskPhoneNumber(
+            booking.booking.user.phoneNumber,
+            false
+          ),
+          firstName: booking.booking.user.firstName || "N/A",
+          lastName: booking.booking.user.lastName || "N/A",
+          email: booking.booking.user.email || null,
+          emergencyContact: booking.booking.user.emergencyContact || null,
+          hasIdProof: !!(
+            booking.booking.user.idProofType &&
+            booking.booking.user.idProofNumber
+          ),
+          idProofType: booking.booking.user.idProofType || null,
         };
       }
     }
 
     // Payment info (sanitized)
     if (booking.booking?.payment) {
-      sanitized.payment = this.sanitizePaymentData(booking.booking.payment, isOwner);
+      sanitized.payment = this.sanitizePaymentData(
+        booking.booking.payment,
+        isOwner
+      );
     }
 
     // Vendor info (only for customers)
@@ -1368,14 +1464,79 @@ export class HotelController {
   static async createHotelBooking(req: Request, res: Response) {
     try {
       const userId = AuthUtils.getUserIdFromToken(req);
-      const { hotelId, roomId, checkInDate, checkOutDate, numberOfGuests } =
-        req.body;
+      const {
+        hotelId,
+        roomId,
+        checkInDate,
+        checkOutDate,
+        numberOfGuests,
+        // Enhanced user information
+        userDetails,
+        guestDetails,
+        specialRequests,
+      } = req.body;
+
+      // Validate required user details
+      if (!userDetails || !userDetails.firstName || !userDetails.lastName) {
+        return ResponseUtils.badRequest(
+          res,
+          "User first name and last name are required"
+        );
+      }
+
+      // Validate guest details
+      if (
+        !guestDetails ||
+        !Array.isArray(guestDetails) ||
+        guestDetails.length === 0
+      ) {
+        return ResponseUtils.badRequest(
+          res,
+          "At least one guest detail is required"
+        );
+      }
+
+      if (guestDetails.length > numberOfGuests) {
+        return ResponseUtils.badRequest(
+          res,
+          "Number of guest details cannot exceed number of guests"
+        );
+      }
+
+      // Validate primary guest exists
+      const primaryGuest = guestDetails.find((guest) => guest.isPrimaryGuest);
+      if (!primaryGuest) {
+        return ResponseUtils.badRequest(
+          res,
+          "One guest must be marked as primary guest"
+        );
+      }
 
       // Clean up abandoned bookings before creating new booking
       await HotelController.autoCleanupExpiredDraftBookings();
 
       // Use a transaction to ensure data consistency and prevent race conditions
       const result = await prisma.$transaction(async (tx) => {
+        // First, update user information
+        const updateData: any = {};
+        if (userDetails.firstName) updateData.firstName = userDetails.firstName;
+        if (userDetails.lastName) updateData.lastName = userDetails.lastName;
+        if (userDetails.email) updateData.email = userDetails.email;
+        if (userDetails.dateOfBirth)
+          updateData.dateOfBirth = new Date(userDetails.dateOfBirth);
+        if (userDetails.address) updateData.address = userDetails.address;
+        if (userDetails.emergencyContact)
+          updateData.emergencyContact = userDetails.emergencyContact;
+        if (userDetails.idProofType)
+          updateData.idProofType = userDetails.idProofType;
+        if (userDetails.idProofNumber)
+          updateData.idProofNumber = userDetails.idProofNumber;
+
+        await tx.user.update({
+          where: { id: userId },
+          data: updateData,
+        });
+
         // Verify room availability with locking
         const room = await tx.room.findUnique({
           where: { id: roomId },
@@ -1416,22 +1577,20 @@ export class HotelController {
         }
 
         // Check for conflicting bookings with more robust query
-        // Only count CONFIRMED bookings and PENDING bookings with successful payments or recent activity
         const conflictingBookings = await tx.hotelBooking.findMany({
           where: {
             roomId,
             AND: [
               {
-                checkInDate: { lt: checkOut }, // Existing booking starts before new booking ends
+                checkInDate: { lt: checkOut },
               },
               {
-                checkOutDate: { gt: checkIn }, // Existing booking ends after new booking starts
+                checkOutDate: { gt: checkIn },
               },
               {
                 OR: [
-                  { status: "CONFIRMED" }, // Always count confirmed bookings
+                  { status: "CONFIRMED" },
                   {
-                    // Only count PENDING bookings that have successful payments
                     status: "PENDING",
                     booking: {
                       payment: {
@@ -1440,10 +1599,9 @@ export class HotelController {
                     },
                   },
                   {
-                    // Count PENDING bookings that are very recent (within 30 minutes) to allow payment completion
                     status: "PENDING",
                     createdAt: {
-                      gt: new Date(Date.now() - 30 * 60 * 1000), // 30 minutes ago
+                      gt: new Date(Date.now() - 30 * 60 * 1000),
                     },
                   },
                 ],
@@ -1458,6 +1616,7 @@ export class HotelController {
             },
           },
         });
+
         if (conflictingBookings.length > 0) {
           throw new Error(
             "Room is not available for selected dates. Another booking already exists for this period."
@@ -1470,7 +1629,7 @@ export class HotelController {
         );
         const currentMonth = checkIn.getMonth();
 
-        // Determine price based on season (June-Aug = Summer, Dec-Feb = Winter)
+        // Determine price based on season
         let pricePerNight = room.basePrice;
         if (currentMonth >= 5 && currentMonth <= 7 && room.summerPrice) {
           pricePerNight = room.summerPrice;
@@ -1485,7 +1644,7 @@ export class HotelController {
         const commissionRate = room.hotelProfile.vendor.commissionRate || 16;
         const commissionAmount = (totalAmount * commissionRate) / 100;
 
-        // Create booking within transaction - NOTE: Status is DRAFT until payment
+        // Create booking within transaction
         const booking = await tx.booking.create({
           data: {
             userId,
@@ -1493,11 +1652,11 @@ export class HotelController {
             bookingType: "HOTEL",
             totalAmount,
             commissionAmount,
-            status: "DRAFT", // Changed from PENDING to DRAFT - only becomes PENDING after payment initiation
+            status: "DRAFT",
           },
         });
 
-        // Create hotel booking within transaction - NOTE: Status is DRAFT until payment
+        // Create hotel booking with enhanced information
         const hotelBooking = await tx.hotelBooking.create({
           data: {
             bookingId: booking.id,
@@ -1507,8 +1666,32 @@ export class HotelController {
             checkOutDate: checkOut,
             numberOfGuests,
             totalAmount,
-            status: "DRAFT", // Changed from PENDING to DRAFT - only becomes PENDING after payment initiation
+            status: "DRAFT",
+            specialRequests,
           },
+        });
+
+        // Create guest records
+        const createdGuests = [];
+        for (const guest of guestDetails) {
+          const createdGuest = await tx.guest.create({
+            data: {
+              hotelBookingId: hotelBooking.id,
+              firstName: guest.firstName,
+              lastName: guest.lastName,
+              age: guest.age,
+              idProofType: guest.idProofType,
+              idProofNumber: guest.idProofNumber,
+              isPrimaryGuest: guest.isPrimaryGuest || false,
+              specialRequests: guest.specialRequests,
+            },
+          });
+          createdGuests.push(createdGuest);
+        }
+
+        // Return the complete booking with all related data
+        const completeBooking = await tx.hotelBooking.findUnique({
+          where: { id: hotelBooking.id },
           include: {
             booking: true,
             hotelProfile: {
@@ -1523,13 +1706,18 @@ export class HotelController {
               },
             },
             room: true,
+            guests: true,
           },
         });
 
-        return hotelBooking;
+        return completeBooking;
       });
 
-      return ResponseUtils.success(res, "Booking created successfully", result);
+      return ResponseUtils.success(
+        res,
+        "Booking created successfully with detailed information",
+        result
+      );
     } catch (error) {
       console.error("Create booking error:", error);
 
@@ -1541,7 +1729,8 @@ export class HotelController {
         if (
           error.message.includes("not found") ||
           error.message.includes("capacity") ||
-          error.message.includes("date")
+          error.message.includes("date") ||
+          error.message.includes("required")
         ) {
           return ResponseUtils.badRequest(res, error.message);
         }
@@ -1586,6 +1775,17 @@ export class HotelController {
                   refundAmount: true,
                 },
               },
+              user: {
+                select: {
+                  phoneNumber: true,
+                  firstName: true,
+                  lastName: true,
+                  email: true,
+                  emergencyContact: true,
+                  idProofType: true,
+                  idProofNumber: true,
+                },
+              },
             },
           },
           hotelProfile: {
@@ -1607,6 +1807,7 @@ export class HotelController {
               amenities: true,
             },
           },
+          guests: true,
         },
         orderBy: { createdAt: "desc" },
       });
@@ -1614,7 +1815,10 @@ export class HotelController {
       const total = await prisma.hotelBooking.count({ where });
 
       // Sanitize the booking data for customer view
-      const sanitizedBookings = SecurityUtils.sanitizeCustomerBookingList(bookings, userId);
+      const sanitizedBookings = SecurityUtils.sanitizeCustomerBookingList(
+        bookings,
+        userId
+      );
 
       return ResponseUtils.success(res, "Bookings retrieved successfully", {
         bookings: sanitizedBookings,
@@ -1684,14 +1888,18 @@ export class HotelController {
           {
             OR: [
               { id: { contains: searchTerm, mode: "insensitive" } },
-              { booking: { 
-                user: { 
-                  phoneNumber: { contains: searchTerm, mode: "insensitive" } 
-                } 
-              }},
-              { room: { 
-                roomNumber: { contains: searchTerm, mode: "insensitive" } 
-              }},
+              {
+                booking: {
+                  user: {
+                    phoneNumber: { contains: searchTerm, mode: "insensitive" },
+                  },
+                },
+              },
+              {
+                room: {
+                  roomNumber: { contains: searchTerm, mode: "insensitive" },
+                },
+              },
             ],
           },
         ];
@@ -1709,6 +1917,12 @@ export class HotelController {
               user: {
                 select: {
                   phoneNumber: true,
+                  firstName: true,
+                  lastName: true,
+                  email: true,
+                  emergencyContact: true,
+                  idProofType: true,
+                  idProofNumber: true,
                 },
               },
               payment: {
@@ -1735,6 +1949,7 @@ export class HotelController {
               capacity: true,
             },
           },
+          guests: true,
         },
         orderBy: { createdAt: "desc" },
       });
@@ -1742,7 +1957,10 @@ export class HotelController {
       const total = await prisma.hotelBooking.count({ where });
 
       // Sanitize the booking data for vendor view
-      const sanitizedBookings = SecurityUtils.sanitizeVendorBookingList(bookings, vendor.id);
+      const sanitizedBookings = SecurityUtils.sanitizeVendorBookingList(
+        bookings,
+        vendor.id
+      );
 
       return ResponseUtils.success(
         res,
@@ -1819,6 +2037,12 @@ export class HotelController {
               user: {
                 select: {
                   phoneNumber: true,
+                  firstName: true,
+                  lastName: true,
+                  email: true,
+                  emergencyContact: true,
+                  idProofType: true,
+                  idProofNumber: true,
                 },
               },
               payment: {
@@ -1846,15 +2070,23 @@ export class HotelController {
               amenities: true,
             },
           },
+          guests: true,
         },
       });
 
       if (!hotelBooking) {
-        return ResponseUtils.notFound(res, "Booking not found or access denied");
+        return ResponseUtils.notFound(
+          res,
+          "Booking not found or access denied"
+        );
       }
 
       // Sanitize the booking data for vendor view
-      const sanitizedBooking = SecurityUtils.sanitizeBookingData(hotelBooking, userId, true);
+      const sanitizedBooking = SecurityUtils.sanitizeBookingData(
+        hotelBooking,
+        userId,
+        true
+      );
 
       return ResponseUtils.success(
         res,
@@ -1885,6 +2117,12 @@ export class HotelController {
               user: {
                 select: {
                   phoneNumber: true,
+                  firstName: true,
+                  lastName: true,
+                  email: true,
+                  emergencyContact: true,
+                  idProofType: true,
+                  idProofNumber: true,
                 },
               },
               payment: {
@@ -1917,6 +2155,7 @@ export class HotelController {
               amenities: true,
             },
           },
+          guests: true,
         },
       });
 
@@ -1946,11 +2185,18 @@ export class HotelController {
                     amenities: true,
                   },
                 },
+                guests: true,
               },
             },
             user: {
               select: {
                 phoneNumber: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                emergencyContact: true,
+                idProofType: true,
+                idProofNumber: true,
               },
             },
             payment: {
@@ -1993,7 +2239,11 @@ export class HotelController {
       }
 
       // Sanitize the booking data based on user role
-      const sanitizedBooking = SecurityUtils.sanitizeBookingData(hotelBooking, userId, isVendor);
+      const sanitizedBooking = SecurityUtils.sanitizeBookingData(
+        hotelBooking,
+        userId,
+        isVendor
+      );
 
       return ResponseUtils.success(
         res,
@@ -2791,7 +3041,6 @@ export class HotelController {
       return { total: 0, draft: 0, pending: 0 };
     }
   }
-
 }
 
 export const hotelController = HotelController;
