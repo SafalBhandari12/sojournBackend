@@ -55,7 +55,11 @@ const userDetailsSchema = z.object({
   idProofNumber: z
     .string()
     .min(3, "ID proof number must be at least 3 characters")
-    .max(20, "ID proof number cannot exceed 20 characters")
+    .max(30, "ID proof number cannot exceed 30 characters")
+    .regex(
+      /^[A-Z0-9\-\s]+$/i,
+      "ID proof number can only contain letters, numbers, hyphens, and spaces"
+    )
     .optional(),
 });
 
@@ -91,7 +95,11 @@ const guestDetailsSchema = z.object({
   idProofNumber: z
     .string()
     .min(3, "Guest ID proof number must be at least 3 characters")
-    .max(20, "Guest ID proof number cannot exceed 20 characters")
+    .max(30, "Guest ID proof number cannot exceed 30 characters")
+    .regex(
+      /^[A-Z0-9\-\s]+$/i,
+      "Guest ID proof number can only contain letters, numbers, hyphens, and spaces"
+    )
     .optional(),
 
   isPrimaryGuest: z.boolean().default(false),

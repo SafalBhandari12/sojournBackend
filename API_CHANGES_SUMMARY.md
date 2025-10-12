@@ -1,5 +1,20 @@
 # API Changes - Enhanced Booking System
 
+## 🆕 Latest Update: Flexible Validation
+
+**Validation Changes Made:**
+
+- ✅ **GST Numbers**: Now accepts 3-50 characters (alphanumeric only) instead of fixed Indian format
+- ✅ **PAN Numbers**: Now accepts 3-20 characters (alphanumeric only) instead of fixed format
+- ✅ **Aadhaar Numbers**: Now accepts 3-20 characters (numeric only) instead of fixed 12 digits
+- ✅ **IFSC Codes**: Now accepts 3-20 characters (alphanumeric) instead of fixed Indian bank format
+- ✅ **Account Numbers**: Now accepts 3-30 characters (alphanumeric) instead of minimum 8 digits
+- ✅ **ID Proof Numbers**: Now accepts 3-30 characters with letters, numbers, hyphens, and spaces
+
+These changes make the system flexible for international vendors and various document formats.
+
+---
+
 ## 🔄 What Changed in the Booking API
 
 ### Booking Creation Request Changes
@@ -163,7 +178,7 @@ DRIVING_LICENSE
 VOTER_ID
 PAN_CARD
 
-```
+````
 
 ## 📋 New Endpoints
 
@@ -180,6 +195,68 @@ All existing endpoints remain the same but now return enhanced data:
 - Vendor responses automatically apply privacy protection (masked phones, hidden ID numbers)
 - Customer responses include all personal data including full phone numbers and ID proof numbers
 
+## 🔍 Specific Endpoint Change
+
+**Your URL:** `GET /api/hotels/bookings/cmgntlzb20005fd29kvwqa2vx`
+
+**What Changed in Request:**
+- ❌ No request body changes (GET request)
+- ✅ Still requires authentication header
+
+**What Changed in Response:**
+```json
+{
+  "success": true,
+  "message": "Booking details retrieved successfully",
+  "data": {
+    "bookingRef": "BK5FD29KVW", // Generated public reference
+    "status": "CONFIRMED",
+    "checkInDate": "2024-03-15T00:00:00.000Z",
+    "checkOutDate": "2024-03-17T00:00:00.000Z",
+    "numberOfGuests": 2,
+    "totalAmount": 5000,
+    "specialRequests": "Room with city view, late check-in", // ✅ NEW
+
+    // ✅ NEW: Guest information array
+    "guests": [
+      {
+        "firstName": "John",
+        "lastName": "Doe",
+        "age": 34,
+        "isPrimaryGuest": true,
+        "specialRequests": "Vegetarian breakfast", // ✅ NEW
+        "idProofType": "PASSPORT", // Customer sees full, vendor sees type only
+        "idProofNumber": "A1234567" // ✅ NEW: Only visible to booking owner
+      }
+    ],
+
+    // Enhanced customer info (privacy-protected for vendors)
+    "customer": {
+      "phoneNumber": "********90", // Masked for vendors, full for customers
+      "firstName": "John",
+      "lastName": "Doe",
+      "email": "john.doe@example.com",
+      "emergencyContact": "+1-555-0123", // ✅ NEW
+      "hasIdProof": true, // ✅ NEW: For vendors
+      "idProofType": "PASSPORT" // ✅ NEW
+    },
+
+    "room": {
+      "type": "DELUXE",
+      "number": "201",
+      "capacity": 2,
+      "amenities": ["WiFi", "AC"]
+    },
+
+    "payment": {
+      "status": "SUCCESS",
+      "method": "RAZORPAY",
+      "totalAmount": 5000
+    }
+  }
+}
+````
+
 ## 🔒 Privacy Protection Summary
 
 | Data Field        | Customer View | Vendor View             |
@@ -190,11 +267,10 @@ All existing endpoints remain the same but now return enhanced data:
 | Emergency Contact | Full          | Full                    |
 | ID Proof Type     | Full          | Full                    |
 | ID Proof Number   | Full          | Hidden                  |
-| Guest Details     | Full          | Names + Age + Requests |
-| Special Requests  | Full          | Full                   |
-| Payment Details   | Full          | Status only            |
+| Guest Details     | Full          | Names + Age + Requests  |
+| Special Requests  | Full          | Full                    |
+| Payment Details   | Full          | Status only             |
 
 ---
 
 **That's it!** The frontend just needs to send the additional fields and handle the enhanced responses.
-```

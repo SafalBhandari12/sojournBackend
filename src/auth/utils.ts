@@ -193,26 +193,29 @@ class ValidationUtils {
   }
 
   /**
-   * Validate GST number
+   * Validate GST number (flexible format)
    */
   static isValidGST(gst: string): boolean {
-    return /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(
-      gst
-    );
+    // Flexible validation: 3-50 characters, alphanumeric only
+    return gst.length >= 3 && gst.length <= 50 && /^[A-Z0-9]+$/.test(gst);
   }
 
   /**
-   * Validate PAN number
+   * Validate PAN number (flexible format)
    */
   static isValidPAN(pan: string): boolean {
-    return /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(pan);
+    // Flexible validation: 3-20 characters, alphanumeric only
+    return pan.length >= 3 && pan.length <= 20 && /^[A-Z0-9]+$/.test(pan);
   }
 
   /**
-   * Validate Aadhaar number
+   * Validate Aadhaar number (flexible format)
    */
   static isValidAadhaar(aadhaar: string): boolean {
-    return /^[0-9]{12}$/.test(aadhaar);
+    // Flexible validation: 3-20 characters, numeric only
+    return (
+      aadhaar.length >= 3 && aadhaar.length <= 20 && /^[0-9]+$/.test(aadhaar)
+    );
   }
 
   /**

@@ -30,27 +30,39 @@ const emailSchema = z.string().email("Invalid email format");
 // GST number schema
 const gstSchema = z
   .string()
-  .regex(
-    /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/,
-    "Invalid GST number format"
-  );
+  .min(3, "GST number must be at least 3 characters")
+  .max(50, "GST number cannot exceed 50 characters")
+  .regex(/^[A-Z0-9]+$/, "GST number can only contain letters and numbers");
 
 // PAN number schema
 const panSchema = z
   .string()
-  .regex(/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/, "Invalid PAN number format");
+  .min(3, "PAN number must be at least 3 characters")
+  .max(20, "PAN number cannot exceed 20 characters")
+  .regex(/^[A-Z0-9]+$/, "PAN number can only contain letters and numbers");
 
 // Aadhaar number schema
 const aadhaarSchema = z
   .string()
-  .regex(/^\d{12}$/, "Aadhaar number must be 12 digits");
+  .min(3, "Aadhaar number must be at least 3 characters")
+  .max(20, "Aadhaar number cannot exceed 20 characters")
+  .regex(/^[0-9]+$/, "Aadhaar number can only contain numbers");
 
 // Bank details schema
 const bankDetailsSchema = z.object({
-  accountNumber: z.string().min(8, "Account number must be at least 8 digits"),
+  accountNumber: z
+    .string()
+    .min(3, "Account number must be at least 3 characters")
+    .max(30, "Account number cannot exceed 30 characters")
+    .regex(
+      /^[A-Z0-9]+$/i,
+      "Account number can only contain letters and numbers"
+    ),
   ifscCode: z
     .string()
-    .regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, "Invalid IFSC code format"),
+    .min(3, "IFSC code must be at least 3 characters")
+    .max(20, "IFSC code cannot exceed 20 characters")
+    .regex(/^[A-Z0-9]+$/i, "IFSC code can only contain letters and numbers"),
   bankName: z.string().min(2, "Bank name is required"),
   branchName: z.string().min(2, "Branch name is required"),
   accountHolder: z.string().min(2, "Account holder name is required"),
