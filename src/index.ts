@@ -142,6 +142,15 @@ app.use(
       });
     }
 
+    if (err.code === "P2028") {
+      return res.status(408).json({
+        success: false,
+        message:
+          "Operation timed out - please try again with fewer images or smaller file sizes",
+        error: "Transaction timeout",
+      });
+    }
+
     // Default error response
     res.status(err.status || 500).json({
       success: false,

@@ -722,86 +722,91 @@ export class HotelController {
         }
       }
 
-      // Handle room creation and image uploads in a transaction
-      const result = await prisma.$transaction(async (tx) => {
-        const room = await tx.room.create({
-          data: {
-            hotelProfileId: hotelProfile.id,
-            roomType,
-            roomNumber,
-            capacity,
-            basePrice,
-            summerPrice,
-            winterPrice,
-            amenities,
-          },
-        });
+      // Handle room creation and image uploads in a transaction with extended timeout
+      const result = await prisma.$transaction(
+        async (tx) => {
+          const room = await tx.room.create({
+            data: {
+              hotelProfileId: hotelProfile.id,
+              roomType,
+              roomNumber,
+              capacity,
+              basePrice,
+              summerPrice,
+              winterPrice,
+              amenities,
+            },
+          });
 
-        // Handle image uploads from multer files
-        const uploadedImages = [];
-        const files = req.files as Express.Multer.File[];
-        const imageUploadErrors = [];
+          // Handle image uploads from multer files
+          const uploadedImages = [];
+          const files = req.files as Express.Multer.File[];
+          const imageUploadErrors = [];
 
-        if (files && files.length > 0) {
-          for (let i = 0; i < files.length; i++) {
-            const file = files[i];
-            if (!file) continue;
+          if (files && files.length > 0) {
+            for (let i = 0; i < files.length; i++) {
+              const file = files[i];
+              if (!file) continue;
 
-            const description = Array.isArray(req.body.descriptions)
-              ? req.body.descriptions[i]
-              : req.body.descriptions ||
-                `Room ${roomNumber || roomType} image ${i + 1}`;
-            const isPrimary = Array.isArray(req.body.isPrimary)
-              ? req.body.isPrimary[i] === "true"
-              : i === 0; // First image is primary by default
+              const description = Array.isArray(req.body.descriptions)
+                ? req.body.descriptions[i]
+                : req.body.descriptions ||
+                  `Room ${roomNumber || roomType} image ${i + 1}`;
+              const isPrimary = Array.isArray(req.body.isPrimary)
+                ? req.body.isPrimary[i] === "true"
+                : i === 0; // First image is primary by default
 
-            try {
-              // Upload to ImageKit
-              const uploadResult = await imagekit.upload({
-                file: file.buffer,
-                fileName:
-                  file.originalname || `room_${room.id}_${Date.now()}_${i}`,
-                folder: `/hotels/${vendor.id}/rooms`,
-                useUniqueFileName: true,
-              });
+              try {
+                // Upload to ImageKit
+                const uploadResult = await imagekit.upload({
+                  file: file.buffer,
+                  fileName:
+                    file.originalname || `room_${room.id}_${Date.now()}_${i}`,
+                  folder: `/hotels/${vendor.id}/rooms`,
+                  useUniqueFileName: true,
+                });
 
-              // Save to database
-              const vendorImage = await tx.vendorImage.create({
-                data: {
-                  vendorId: vendor.id,
-                  imageUrl: uploadResult.url,
-                  imageType,
-                  description,
-                  isPrimary,
-                  roomId: room.id, // Associate with the room
-                },
-              });
+                // Save to database
+                const vendorImage = await tx.vendorImage.create({
+                  data: {
+                    vendorId: vendor.id,
+                    imageUrl: uploadResult.url,
+                    imageType,
+                    description,
+                    isPrimary,
+                    roomId: room.id, // Associate with the room
+                  },
+                });
 
-              uploadedImages.push({
-                ...vendorImage,
-                fileId: uploadResult.fileId,
-                thumbnailUrl: uploadResult.thumbnailUrl,
-              });
-            } catch (uploadError) {
-              console.error("Image upload error:", uploadError);
-              imageUploadErrors.push({
-                index: i,
-                fileName: file.originalname,
-                error:
-                  uploadError instanceof Error
-                    ? uploadError.message
-                    : "Unknown upload error",
-              });
+                uploadedImages.push({
+                  ...vendorImage,
+                  fileId: uploadResult.fileId,
+                  thumbnailUrl: uploadResult.thumbnailUrl,
+                });
+              } catch (uploadError) {
+                console.error("Image upload error:", uploadError);
+                imageUploadErrors.push({
+                  index: i,
+                  fileName: file.originalname,
+                  error:
+                    uploadError instanceof Error
+                      ? uploadError.message
+                      : "Unknown upload error",
+                });
+              }
             }
           }
-        }
 
-        return {
-          room,
-          uploadedImages,
-          imageUploadErrors,
-        };
-      });
+          return {
+            room,
+            uploadedImages,
+            imageUploadErrors,
+          };
+        },
+        {
+          timeout: 30000, // 30 second timeout for image uploads
+        }
+      );
 
       // If there were image upload errors, include them in the response
       if (result.imageUploadErrors.length > 0) {
@@ -876,101 +881,106 @@ export class HotelController {
         return ResponseUtils.notFound(res, "Room not found");
       }
 
-      // Handle room update and image uploads in a transaction
-      const result = await prisma.$transaction(async (tx) => {
-        // Update room data
-        const updatedRoom = await tx.room.update({
-          where: { id: roomId },
-          data: updateData,
-        });
+      // Handle room update and image uploads in a transaction with extended timeout
+      const result = await prisma.$transaction(
+        async (tx) => {
+          // Update room data
+          const updatedRoom = await tx.room.update({
+            where: { id: roomId },
+            data: updateData,
+          });
 
-        // Handle image uploads from multer files
-        const uploadedImages = [];
-        const files = req.files as Express.Multer.File[];
-        const imageUploadErrors = [];
+          // Handle image uploads from multer files
+          const uploadedImages = [];
+          const files = req.files as Express.Multer.File[];
+          const imageUploadErrors = [];
 
-        if (files && files.length > 0) {
-          // Check if any of the new images should be primary
-          const hasPrimaryInRequest = Array.isArray(req.body.isPrimary)
-            ? req.body.isPrimary.some((p: string) => p === "true")
-            : req.body.isPrimary === "true";
+          if (files && files.length > 0) {
+            // Check if any of the new images should be primary
+            const hasPrimaryInRequest = Array.isArray(req.body.isPrimary)
+              ? req.body.isPrimary.some((p: string) => p === "true")
+              : req.body.isPrimary === "true";
 
-          // If setting a new primary image, update existing ones to non-primary
-          if (hasPrimaryInRequest) {
-            await tx.vendorImage.updateMany({
-              where: {
-                roomId: roomId,
-                isPrimary: true,
-              },
-              data: {
-                isPrimary: false,
-              },
-            });
-          }
-
-          for (let i = 0; i < files.length; i++) {
-            const file = files[i];
-            if (!file) continue;
-
-            const description = Array.isArray(req.body.descriptions)
-              ? req.body.descriptions[i]
-              : req.body.descriptions ||
-                `Room ${room.roomNumber || room.roomType} updated image ${
-                  i + 1
-                }`;
-
-            const isPrimary = Array.isArray(req.body.isPrimary)
-              ? req.body.isPrimary[i] === "true"
-              : req.body.isPrimary === "true" && i === 0; // Only first image can be primary if single value
-
-            try {
-              // Upload to ImageKit
-              const uploadResult = await imagekit.upload({
-                file: file.buffer,
-                fileName:
-                  file.originalname ||
-                  `room_${roomId}_update_${Date.now()}_${i}`,
-                folder: `/hotels/${vendor.id}/rooms`,
-                useUniqueFileName: true,
-              });
-
-              // Save to database
-              const vendorImage = await tx.vendorImage.create({
+            // If setting a new primary image, update existing ones to non-primary
+            if (hasPrimaryInRequest) {
+              await tx.vendorImage.updateMany({
+                where: {
+                  roomId: roomId,
+                  isPrimary: true,
+                },
                 data: {
-                  vendorId: vendor.id,
-                  imageUrl: uploadResult.url,
-                  imageType,
-                  description,
-                  isPrimary,
-                  roomId: roomId, // Associate with the room
+                  isPrimary: false,
                 },
               });
+            }
 
-              uploadedImages.push({
-                ...vendorImage,
-                fileId: uploadResult.fileId,
-                thumbnailUrl: uploadResult.thumbnailUrl,
-              });
-            } catch (uploadError) {
-              console.error("Image upload error:", uploadError);
-              imageUploadErrors.push({
-                index: i,
-                fileName: file.originalname,
-                error:
-                  uploadError instanceof Error
-                    ? uploadError.message
-                    : "Unknown upload error",
-              });
+            for (let i = 0; i < files.length; i++) {
+              const file = files[i];
+              if (!file) continue;
+
+              const description = Array.isArray(req.body.descriptions)
+                ? req.body.descriptions[i]
+                : req.body.descriptions ||
+                  `Room ${room.roomNumber || room.roomType} updated image ${
+                    i + 1
+                  }`;
+
+              const isPrimary = Array.isArray(req.body.isPrimary)
+                ? req.body.isPrimary[i] === "true"
+                : req.body.isPrimary === "true" && i === 0; // Only first image can be primary if single value
+
+              try {
+                // Upload to ImageKit
+                const uploadResult = await imagekit.upload({
+                  file: file.buffer,
+                  fileName:
+                    file.originalname ||
+                    `room_${roomId}_update_${Date.now()}_${i}`,
+                  folder: `/hotels/${vendor.id}/rooms`,
+                  useUniqueFileName: true,
+                });
+
+                // Save to database
+                const vendorImage = await tx.vendorImage.create({
+                  data: {
+                    vendorId: vendor.id,
+                    imageUrl: uploadResult.url,
+                    imageType,
+                    description,
+                    isPrimary,
+                    roomId: roomId, // Associate with the room
+                  },
+                });
+
+                uploadedImages.push({
+                  ...vendorImage,
+                  fileId: uploadResult.fileId,
+                  thumbnailUrl: uploadResult.thumbnailUrl,
+                });
+              } catch (uploadError) {
+                console.error("Image upload error:", uploadError);
+                imageUploadErrors.push({
+                  index: i,
+                  fileName: file.originalname,
+                  error:
+                    uploadError instanceof Error
+                      ? uploadError.message
+                      : "Unknown upload error",
+                });
+              }
             }
           }
-        }
 
-        return {
-          room: updatedRoom,
-          uploadedImages,
-          imageUploadErrors,
-        };
-      });
+          return {
+            room: updatedRoom,
+            uploadedImages,
+            imageUploadErrors,
+          };
+        },
+        {
+          timeout: 30000, // 30 second timeout for image uploads
+        }
+      );
 
       // If there were image upload errors, include them in the response
       if (result.imageUploadErrors.length > 0) {
