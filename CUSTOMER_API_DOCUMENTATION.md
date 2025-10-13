@@ -535,6 +535,19 @@ Check room availability for specific dates at a hotel.
 
 ## 🏨 **Hotel Booking Management**
 
+### **Booking API Routes Overview**
+
+| Method  | Route                                              | Description                   | Status                                      |
+| ------- | -------------------------------------------------- | ----------------------------- | ------------------------------------------- |
+| `POST`  | `/hotels/bookings`                                 | Create new booking            | Creates DRAFT booking                       |
+| `GET`   | `/hotels/customer/bookings`                        | Get customer's bookings       | Shows PENDING/CONFIRMED/CANCELLED/COMPLETED |
+| `GET`   | `/hotels/bookings/:bookingId`                      | Get specific booking details  | Full booking information                    |
+| `PATCH` | `/hotels/bookings/:bookingId/cancel`               | Cancel a booking              | Cancel with refund processing               |
+| `PATCH` | `/hotels/bookings/:bookingId/confirm`              | Confirm booking (vendor only) | Vendor confirms booking                     |
+| `POST`  | `/hotels/bookings/:bookingId/payment/create-order` | Create payment order          | DRAFT → PENDING                             |
+| `POST`  | `/hotels/bookings/:bookingId/payment/verify`       | Verify payment                | PENDING → CONFIRMED                         |
+| `POST`  | `/hotels/bookings/:bookingId/payment/refund`       | Process refund                | Refund for cancelled bookings               |
+
 ### 1. **Create Hotel Booking**
 
 **`POST /hotels/bookings`**
@@ -557,20 +570,37 @@ Content-Type: application/json
   "checkInDate": "2024-10-15",
   "checkOutDate": "2024-10-17",
   "numberOfGuests": 2,
-  "guestDetails": {
-    "primaryGuest": {
-      "name": "John Doe",
-      "phone": "+91-9876543211",
-      "email": "john@example.com"
-    },
-    "additionalGuests": [
-      {
-        "name": "Jane Doe",
-        "age": 28
-      }
-    ]
+  "userDetails": {
+    "firstName": "John",
+    "lastName": "Doe",
+    "email": "john@example.com",
+    "dateOfBirth": "1990-05-15",
+    "address": "123 Main Street, Mumbai",
+    "emergencyContact": "+91-9876543212",
+    "idProofType": "PASSPORT",
+    "idProofNumber": "A1234567"
   },
-  "specialRequests": "Late check-in, vegetarian meals preferred"
+  "guestDetails": [
+    {
+      "firstName": "John",
+      "lastName": "Doe",
+      "age": 34,
+      "idProofType": "PASSPORT",
+      "idProofNumber": "A1234567",
+      "isPrimaryGuest": true,
+      "specialRequests": "Late check-in after 10 PM, vegetarian breakfast"
+    },
+    {
+      "firstName": "Jane",
+      "lastName": "Doe",
+      "age": 32,
+      "idProofType": "AADHAR",
+      "idProofNumber": "123456789012",
+      "isPrimaryGuest": false,
+      "specialRequests": "Gluten-free meals, room on lower floor"
+    }
+  ],
+  "specialRequests": "Room with city view, quiet floor preferred"
 }
 ```
 
@@ -611,6 +641,27 @@ Content-Type: application/json
       "capacity": 2,
       "amenities": ["tv", "ac", "wifi", "minibar"]
     },
+    "guests": [
+      {
+        "id": "guest_123",
+        "firstName": "John",
+        "lastName": "Doe",
+        "age": 34,
+        "isPrimaryGuest": true,
+        "specialRequests": "Late check-in after 10 PM, vegetarian breakfast",
+        "idProofType": "PASSPORT"
+      },
+      {
+        "id": "guest_124",
+        "firstName": "Jane",
+        "lastName": "Doe",
+        "age": 32,
+        "isPrimaryGuest": false,
+        "specialRequests": "Gluten-free meals, room on lower floor",
+        "idProofType": "AADHAR"
+      }
+    ],
+    "specialRequests": "Room with city view, quiet floor preferred",
     "paymentDetails": {
       "paymentRequired": true,
       "paymentDeadline": "2024-10-14T23:59:59Z",
@@ -625,7 +676,7 @@ Content-Type: application/json
 
 ### 2. **Get Customer Bookings**
 
-**`GET /hotels/bookings`**
+**`GET /hotels/customer/bookings`**
 
 Retrieve all bookings for the authenticated customer with filtering options.
 
@@ -648,6 +699,115 @@ Authorization: Bearer <access_token>
 - `limit`: Number of results per page
 - `startDate`: Filter by booking creation date (from)
 - `endDate`: Filter by booking creation date (to)
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "message": "Bookings retrieved successfully",
+  "data": {
+    "bookings": [
+      {
+        "bookingRef": "BK5A7B9C12",
+        "status": "CONFIRMED",
+        "checkInDate": "2024-10-15T00:00:00Z",
+        "checkOutDate": "2024-10-17T00:00:00Z",
+        "numberOfGuests": 2,
+        "totalAmount": 5000.0,
+        "specialRequests": "Room with city view, quiet floor preferred",
+        "guests": [
+          {
+            "firstName": "John",
+            "lastName": "Doe",
+            "age": 34,
+            "isPrimaryGuest": true,
+            "specialRequests": "Late check-in after 10 PM, vegetarian breakfast",
+            "idProofType": "PASSPORT",
+            "idProofNumber": "A1234567"
+          },
+          {
+            "firstName": "Jane",
+            "lastName": "Doe",
+            "age": 32,
+            "isPrimaryGuest": false,
+            "specialRequests": "Gluten-free meals, room on lower floor",
+            "idProofType": "AADHAR",
+            "idProofNumber": "123456789012"
+          }
+        ],
+        "customer": {
+          "phoneNumber": "+91-9876543211",
+          "firstName": "John",
+          "lastName": "Doe",
+          "email": "john@example.com",
+          "emergencyContact": "+91-9876543212",
+          "idProofType": "PASSPORT",
+          "idProofNumber": "A1234567"
+        },
+        "hotel": {
+          "name": "Grand Palace Resort",
+          "category": "RESORT",
+          "address": "123 Hotel Street, Mumbai",
+          "contactNumbers": ["+91-9876543214"]
+        },
+        "room": {
+          "type": "DELUXE",
+          "number": "101",
+          "capacity": 2,
+          "amenities": ["tv", "ac", "wifi", "minibar"]
+        },
+        "payment": {
+          "status": "SUCCESS",
+          "method": "RAZORPAY",
+          "totalAmount": 5000.0,
+          "processedAt": "2024-10-08T16:00:00Z"
+        },
+        "vendor": {
+          "businessName": "Grand Palace Hotels",
+          "contactNumbers": ["+91-9876543214"]
+        },
+        "createdAt": "2024-10-08T15:30:00Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 10,
+      "total": 5,
+      "totalPages": 1
+    },
+    "summary": {
+      "totalBookings": 5,
+      "upcomingBookings": 1,
+      "completedBookings": 3,
+      "cancelledBookings": 1,
+      "totalSpent": 25000.0
+    }
+  }
+}
+```
+
+### 3. **Get Customer Bookings (Alternative Route)**
+
+**`GET /hotels/bookings`** _(Legacy route - same as above)_
+
+This route provides the same functionality as `/hotels/customer/bookings` and returns identical response format.
+
+### 4. **Get Booking Details**
+
+**`GET /hotels/bookings/:bookingId`**
+
+Get comprehensive details about a specific booking using the booking ID.
+
+**Headers:**
+
+```
+Authorization: Bearer <access_token>
+```
+
+**Parameters:**
+
+- `bookingId`: Unique booking identifier (hotel booking ID or main booking ID)
 
 **Response:**
 
@@ -709,94 +869,70 @@ Authorization: Bearer <access_token>
 }
 ```
 
-### 3. **Get Booking Details**
-
-**`GET /hotels/bookings/:bookingId`**
-
-Get comprehensive details about a specific booking.
-
-**Headers:**
-
-```
-Authorization: Bearer <access_token>
-```
-
-**Parameters:**
-
-- `bookingId`: Unique booking identifier
-
-**Response:**
+**Response (Enhanced booking details):**
 
 ```json
 {
   "success": true,
   "message": "Booking details retrieved successfully",
   "data": {
-    "id": "booking_123",
+    "bookingRef": "BK5A7B9C12",
+    "status": "CONFIRMED",
     "checkInDate": "2024-10-15T00:00:00Z",
     "checkOutDate": "2024-10-17T00:00:00Z",
     "numberOfGuests": 2,
     "totalAmount": 5000.0,
-    "status": "CONFIRMED",
-    "user": {
-      "phoneNumber": "+91-9876543211"
-    },
-    "booking": {
-      "id": "main_booking_123",
-      "bookingType": "HOTEL",
-      "totalAmount": 5000.0,
-      "commissionAmount": 800.0,
-      "status": "CONFIRMED",
-      "payment": {
-        "paymentStatus": "SUCCESS",
-        "paymentMethod": "RAZORPAY",
-        "razorpayOrderId": "order_xyz789",
-        "razorpayPaymentId": "pay_abc123",
-        "processedAt": "2024-10-08T16:00:00Z"
+    "specialRequests": "Room with city view, quiet floor preferred",
+    "guests": [
+      {
+        "firstName": "John",
+        "lastName": "Doe",
+        "age": 34,
+        "isPrimaryGuest": true,
+        "specialRequests": "Late check-in after 10 PM, vegetarian breakfast",
+        "idProofType": "PASSPORT",
+        "idProofNumber": "A1234567"
+      },
+      {
+        "firstName": "Jane",
+        "lastName": "Doe",
+        "age": 32,
+        "isPrimaryGuest": false,
+        "specialRequests": "Gluten-free meals, room on lower floor",
+        "idProofType": "AADHAR",
+        "idProofNumber": "123456789012"
       }
+    ],
+    "customer": {
+      "phoneNumber": "+91-9876543211",
+      "firstName": "John",
+      "lastName": "Doe",
+      "email": "john@example.com",
+      "emergencyContact": "+91-9876543212",
+      "idProofType": "PASSPORT",
+      "idProofNumber": "A1234567"
     },
-    "hotelProfile": {
-      "id": "hotel_123",
-      "hotelName": "Grand Palace Resort",
+    "hotel": {
+      "name": "Grand Palace Resort",
       "category": "RESORT",
-      "checkInTime": "14:00",
-      "checkOutTime": "11:00",
-      "vendor": {
-        "businessName": "Grand Palace Hotels",
-        "businessAddress": "123 Hotel Street, Mumbai, Maharashtra",
-        "contactNumbers": ["+91-9876543214"],
-        "email": "contact@grandpalace.com"
-      }
+      "address": "123 Hotel Street, Mumbai, Maharashtra",
+      "contactNumbers": ["+91-9876543214"]
     },
     "room": {
-      "id": "room_123",
-      "roomType": "DELUXE",
-      "roomNumber": "101",
+      "type": "DELUXE",
+      "number": "101",
       "capacity": 2,
       "amenities": ["tv", "ac", "wifi", "minibar", "balcony"]
     },
-    "guestDetails": {
-      "primaryGuest": {
-        "name": "John Doe",
-        "phone": "+91-9876543211",
-        "email": "john@example.com"
-      },
-      "additionalGuests": [
-        {
-          "name": "Jane Doe",
-          "age": 28
-        }
-      ]
+    "payment": {
+      "status": "SUCCESS",
+      "method": "RAZORPAY",
+      "totalAmount": 5000.0,
+      "processedAt": "2024-10-08T16:00:00Z"
     },
-    "policies": {
-      "cancellationPolicy": "Free cancellation up to 24 hours before check-in",
-      "checkInPolicy": "Photo ID required at check-in",
-      "childPolicy": "Children under 12 stay free"
-    },
-    "actions": {
-      "canCancel": true,
-      "canModify": false,
-      "canDownloadInvoice": true
+    "vendor": {
+      "businessName": "Grand Palace Hotels",
+      "contactNumbers": ["+91-9876543214"]
     },
     "createdAt": "2024-10-08T15:30:00Z",
     "updatedAt": "2024-10-08T16:00:00Z"
@@ -804,7 +940,7 @@ Authorization: Bearer <access_token>
 }
 ```
 
-### 4. **Cancel Booking**
+### 5. **Cancel Booking**
 
 **`PATCH /hotels/bookings/:bookingId/cancel`**
 
@@ -852,6 +988,70 @@ Content-Type: application/json
   }
 }
 ```
+
+---
+
+## 📋 **Customer Booking Routes Quick Reference**
+
+### **For Customers - How to View Your Bookings**
+
+#### **Option 1: Get All Your Bookings**
+
+```
+GET /hotels/customer/bookings
+```
+
+- ✅ **Recommended route** for customer booking lists
+- Shows: PENDING, CONFIRMED, CANCELLED, COMPLETED bookings
+- Excludes: DRAFT bookings (internal use only)
+- Includes: Full customer data with ID proof numbers
+- Response: Paginated list with summary statistics
+
+#### **Option 2: Alternative Booking List**
+
+```
+GET /hotels/bookings
+```
+
+- ✅ **Legacy route** (same functionality as above)
+- Identical response format and filtering options
+
+#### **Option 3: Get Specific Booking Details**
+
+```
+GET /hotels/bookings/{bookingId}
+```
+
+- ✅ **Detailed view** of single booking
+- Use booking ID from booking list response
+- Shows complete booking information
+- Includes guest details and payment information
+
+### **Booking Status Flow for Customers**
+
+```
+1. Create Booking → DRAFT (invisible to customer)
+2. Initiate Payment → PENDING (visible in booking list)
+3. Complete Payment → CONFIRMED (booking confirmed)
+4. Cancel Booking → CANCELLED (shows refund status)
+5. After Stay → COMPLETED (available for review)
+```
+
+### **Customer Booking Data Access**
+
+**What Customers See in Their Booking Responses:**
+
+- ✅ Full personal details including ID proof numbers
+- ✅ Complete guest information with ID proofs
+- ✅ All payment details and transaction history
+- ✅ Hotel contact information for direct communication
+- ✅ Booking modification and cancellation options
+
+**Privacy Protection:**
+
+- 🔒 Other customers cannot see your bookings
+- 🔒 Vendors see limited data (phone masked, ID numbers hidden)
+- 🔒 DRAFT bookings are never exposed to avoid confusion
 
 ---
 
@@ -1385,7 +1585,90 @@ class HotelService {
 export default new HotelService();
 ```
 
-#### **3. Booking Service with Updated Flow**
+#### **3. Customer Booking Service**
+
+```javascript
+// customerBooking.service.js
+import AuthService from "./auth.service";
+
+class CustomerBookingService {
+  constructor() {
+    this.baseURL = "https://your-api-domain.com/api";
+  }
+
+  // Get customer's booking list (recommended route)
+  async getCustomerBookings(filters = {}) {
+    const queryParams = new URLSearchParams(filters);
+    return AuthService.makeAuthenticatedRequest(
+      `${this.baseURL}/hotels/customer/bookings?${queryParams.toString()}`
+    );
+  }
+
+  // Alternative booking list route
+  async getBookingsList(filters = {}) {
+    const queryParams = new URLSearchParams(filters);
+    return AuthService.makeAuthenticatedRequest(
+      `${this.baseURL}/hotels/bookings?${queryParams.toString()}`
+    );
+  }
+
+  // Get specific booking details
+  async getBookingDetails(bookingId) {
+    return AuthService.makeAuthenticatedRequest(
+      `${this.baseURL}/hotels/bookings/${bookingId}`
+    );
+  }
+
+  // Create new booking (Enhanced with user and guest details)
+  async createBooking(bookingData) {
+    const enhancedBookingData = {
+      ...bookingData,
+      userDetails: {
+        firstName: bookingData.userDetails.firstName,
+        lastName: bookingData.userDetails.lastName,
+        email: bookingData.userDetails.email,
+        dateOfBirth: bookingData.userDetails.dateOfBirth,
+        address: bookingData.userDetails.address,
+        emergencyContact: bookingData.userDetails.emergencyContact,
+        idProofType: bookingData.userDetails.idProofType,
+        idProofNumber: bookingData.userDetails.idProofNumber,
+      },
+      guestDetails: bookingData.guestDetails.map((guest) => ({
+        firstName: guest.firstName,
+        lastName: guest.lastName,
+        age: guest.age,
+        idProofType: guest.idProofType,
+        idProofNumber: guest.idProofNumber,
+        isPrimaryGuest: guest.isPrimaryGuest,
+        specialRequests: guest.specialRequests,
+      })),
+    };
+
+    return AuthService.makeAuthenticatedRequest(
+      `${this.baseURL}/hotels/bookings`,
+      {
+        method: "POST",
+        body: JSON.stringify(enhancedBookingData),
+      }
+    );
+  }
+
+  // Cancel booking
+  async cancelBooking(bookingId, reason = "") {
+    return AuthService.makeAuthenticatedRequest(
+      `${this.baseURL}/hotels/bookings/${bookingId}/cancel`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ reason }),
+      }
+    );
+  }
+}
+
+export default new CustomerBookingService();
+```
+
+#### **4. Booking Service with Updated Flow**
 
 ```javascript
 // booking.service.js
@@ -1394,17 +1677,6 @@ import AuthService from "./auth.service";
 class BookingService {
   constructor() {
     this.baseURL = "https://your-api-domain.com/api";
-  }
-
-  // Create new booking (starts as DRAFT)
-  async createBooking(bookingData) {
-    return AuthService.makeAuthenticatedRequest(
-      `${this.baseURL}/hotels/bookings`,
-      {
-        method: "POST",
-        body: JSON.stringify(bookingData),
-      }
-    );
   }
 
   // Create payment order (changes status to PENDING)
@@ -1427,31 +1699,216 @@ class BookingService {
       }
     );
   }
-
-  // Get customer bookings (excludes DRAFT bookings)
-  async getCustomerBookings(filters = {}) {
-    const queryParams = new URLSearchParams(filters);
-    return AuthService.makeAuthenticatedRequest(
-      `${this.baseURL}/hotels/bookings?${queryParams.toString()}`
-    );
-  }
-
-  // Cancel booking
-  async cancelBooking(bookingId, reason = "") {
-    return AuthService.makeAuthenticatedRequest(
-      `${this.baseURL}/hotels/bookings/${bookingId}/cancel`,
-      {
-        method: "PATCH",
-        body: JSON.stringify({ reason }),
-      }
-    );
-  }
 }
 
 export default new BookingService();
 ```
 
-#### **4. Enhanced Razorpay Payment Integration**
+#### **5. React Component Example - Customer Booking Dashboard**
+
+```jsx
+// CustomerBookings.jsx
+import React, { useState, useEffect } from "react";
+import CustomerBookingService from "../services/customerBooking.service";
+
+const CustomerBookings = () => {
+  const [bookings, setBookings] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [filters, setFilters] = useState({
+    status: "",
+    page: 1,
+    limit: 10,
+  });
+
+  useEffect(() => {
+    fetchBookings();
+  }, [filters]);
+
+  const fetchBookings = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      // Use the recommended customer bookings route
+      const response = await CustomerBookingService.getCustomerBookings(
+        filters
+      );
+
+      if (response.success) {
+        setBookings(response.data.bookings);
+        console.log("Bookings loaded:", response.data);
+      } else {
+        setError(response.message);
+      }
+    } catch (err) {
+      setError("Failed to load bookings");
+      console.error("Booking fetch error:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleStatusFilter = (status) => {
+    setFilters({ ...filters, status, page: 1 });
+  };
+
+  const viewBookingDetails = async (bookingId) => {
+    try {
+      const response = await CustomerBookingService.getBookingDetails(
+        bookingId
+      );
+      if (response.success) {
+        console.log("Booking details:", response.data);
+        // Navigate to booking details page or show modal
+      }
+    } catch (err) {
+      console.error("Failed to load booking details:", err);
+    }
+  };
+
+  if (loading) return <div className='loading'>Loading your bookings...</div>;
+  if (error) return <div className='error'>Error: {error}</div>;
+
+  return (
+    <div className='customer-bookings'>
+      <h2>My Bookings</h2>
+
+      {/* Status Filter */}
+      <div className='booking-filters'>
+        <button
+          onClick={() => handleStatusFilter("")}
+          className={!filters.status ? "active" : ""}
+        >
+          All Bookings
+        </button>
+        <button
+          onClick={() => handleStatusFilter("PENDING")}
+          className={filters.status === "PENDING" ? "active" : ""}
+        >
+          Pending Payment
+        </button>
+        <button
+          onClick={() => handleStatusFilter("CONFIRMED")}
+          className={filters.status === "CONFIRMED" ? "active" : ""}
+        >
+          Confirmed
+        </button>
+        <button
+          onClick={() => handleStatusFilter("COMPLETED")}
+          className={filters.status === "COMPLETED" ? "active" : ""}
+        >
+          Completed
+        </button>
+        <button
+          onClick={() => handleStatusFilter("CANCELLED")}
+          className={filters.status === "CANCELLED" ? "active" : ""}
+        >
+          Cancelled
+        </button>
+      </div>
+
+      {/* Bookings List */}
+      <div className='bookings-list'>
+        {bookings.length === 0 ? (
+          <div className='no-bookings'>
+            <p>No bookings found</p>
+            <button onClick={() => (window.location.href = "/hotels")}>
+              Book Your First Hotel
+            </button>
+          </div>
+        ) : (
+          bookings.map((booking) => (
+            <div key={booking.bookingRef} className='booking-card'>
+              <div className='booking-header'>
+                <h3>{booking.hotel.name}</h3>
+                <span className={`status ${booking.status.toLowerCase()}`}>
+                  {booking.status}
+                </span>
+              </div>
+
+              <div className='booking-details'>
+                <p>
+                  <strong>Booking Ref:</strong> {booking.bookingRef}
+                </p>
+                <p>
+                  <strong>Check-in:</strong>{" "}
+                  {new Date(booking.checkInDate).toLocaleDateString()}
+                </p>
+                <p>
+                  <strong>Check-out:</strong>{" "}
+                  {new Date(booking.checkOutDate).toLocaleDateString()}
+                </p>
+                <p>
+                  <strong>Room:</strong> {booking.room.type} -{" "}
+                  {booking.room.number}
+                </p>
+                <p>
+                  <strong>Guests:</strong> {booking.numberOfGuests}
+                </p>
+                <p>
+                  <strong>Total:</strong> ₹{booking.totalAmount}
+                </p>
+              </div>
+
+              {/* Guest Information */}
+              <div className='guest-info'>
+                <h4>Guests:</h4>
+                {booking.guests.map((guest, index) => (
+                  <div key={index} className='guest-item'>
+                    <span>
+                      {guest.firstName} {guest.lastName}
+                    </span>
+                    {guest.isPrimaryGuest && (
+                      <span className='primary-badge'>Primary</span>
+                    )}
+                    {guest.age && <span>Age: {guest.age}</span>}
+                  </div>
+                ))}
+              </div>
+
+              <div className='booking-actions'>
+                <button
+                  onClick={() => viewBookingDetails(booking.bookingRef)}
+                  className='btn-secondary'
+                >
+                  View Details
+                </button>
+
+                {booking.status === "PENDING" && (
+                  <button
+                    onClick={() => {
+                      /* Initiate payment */
+                    }}
+                    className='btn-primary'
+                  >
+                    Complete Payment
+                  </button>
+                )}
+
+                {booking.status === "CONFIRMED" && (
+                  <button
+                    onClick={() => {
+                      /* Cancel booking */
+                    }}
+                    className='btn-danger'
+                  >
+                    Cancel Booking
+                  </button>
+                )}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default CustomerBookings;
+```
+
+#### **6. Enhanced Hotel Booking Flow Component**
 
 ```javascript
 // payment.service.js

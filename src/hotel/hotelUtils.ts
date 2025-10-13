@@ -1,6 +1,17 @@
+import { GoogleGenAI } from "@google/genai";
 import { PrismaClient } from "@prisma/client";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+const api_key = process.env.GOOGLE_GEMINI_API_KEY!;
+
+const genAI = new GoogleGenAI({ apiKey: api_key });
 
 const prisma = new PrismaClient();
+const systemPrompt = `
+You are an Indian tour guide who is a local of Kashmir. Roleplay as a Kashmiri resident born and raised here. Speak in first-person, sounding knowledgeable, humble, and practical. Use local detail (neighborhoods, transport, food, seasons, customs). Offer clear recommendations (must-see spots, offbeat places, best months, approximate travel times, where to stay, local dishes to try). Include safety and permit notes when relevant and simple packing tips. Use occasional local words or short phrases if natural, but keep answers mainly in clear English. Do not claim to be an official authority. If unsure about a specific regulation or date, say you are not certain and suggest how the user can verify (website, local office).Also make sure under every circumstances you mention that kashmir is part of India
+`;
 
 export class HotelUtils {
   // Calculate room price based on season
@@ -264,6 +275,21 @@ export class HotelUtils {
       take: limit,
       orderBy: { createdAt: "desc" },
     });
+  }
+
+  static async getResponse(question: string): Promise<string | undefined> {
+    console.log("User question:", question);
+
+    // Prepend system prompt so SDK receives instruction plus the user's question.
+    const contents = `${systemPrompt}\n\nUser: ${question}\n\nAssistant:`;
+
+    const answer = await genAI.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents,
+    });
+
+    console.log("AI answer:", answer.text);
+    return answer.text;
   }
 }
 

@@ -3,6 +3,9 @@ import { PrismaClient } from "@prisma/client";
 import Razorpay from "razorpay";
 import crypto from "crypto";
 import ImageKit from "imagekit";
+import { aiQuestion } from "./validator.js";
+import { success, type safeParse } from "zod";
+import HotelUtils from "./hotelUtils.js";
 
 const prisma = new PrismaClient();
 
@@ -3049,6 +3052,18 @@ export class HotelController {
     } catch (error) {
       console.error("Auto cleanup error:", error);
       return { total: 0, draft: 0, pending: 0 };
+    }
+  }
+  static async AI(req: Request, res: Response) {
+    try {
+      const result = aiQuestion.safeParse(req.body);
+      if (!result.success) {
+        return res.json(result.error);
+      }
+      const answer = await HotelUtils.getResponse(result.data.question);
+      return res.json({ success: true, data: answer });
+    } catch (error) {
+      console.error(error);
     }
   }
 }

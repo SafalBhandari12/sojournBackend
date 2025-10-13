@@ -22,6 +22,10 @@ const imageSchema = z.object({
   isPrimary: z.boolean().default(false),
 });
 
+export const aiQuestion = z.object({
+  question: z.string().min(1).max(500, "Question cannot be more than "),
+});
+
 export const createHotelProfileSchema = z.object({
   body: z.object({
     hotelName: z

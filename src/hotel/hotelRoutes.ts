@@ -324,6 +324,9 @@ router.post("/payment-webhook", async (req: Request, res: Response) => {
   }
 });
 
+// AI Features
+router.post("/ai", authMiddleware, hotelController.AI);
+
 // Admin utility routes
 router.post(
   "/admin/cleanup-expired-drafts",
