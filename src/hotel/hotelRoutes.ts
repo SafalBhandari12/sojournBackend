@@ -128,7 +128,11 @@ router.post(
 );
 
 // Get customer bookings
-router.get("/bookings", authMiddleware, hotelController.getCustomerBookings);
+router.get(
+  "/customer/bookings",
+  authMiddleware,
+  hotelController.getCustomerBookings
+);
 
 // Get vendor bookings
 router.get(
