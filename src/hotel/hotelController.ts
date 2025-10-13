@@ -70,7 +70,7 @@ class SecurityUtils {
   // Clean vendor booking list
   static sanitizeVendorBookingList(bookings: any[], vendorId: string): any[] {
     return bookings.map((booking) => ({
-      bookingRef: this.generatePublicBookingRef(booking.id),
+      bookingId: booking.id,
       status: booking.status,
       checkInDate: booking.checkInDate,
       checkOutDate: booking.checkOutDate,
@@ -115,7 +115,7 @@ class SecurityUtils {
     customerId: string
   ): any[] {
     return bookings.map((booking) => ({
-      bookingRef: this.generatePublicBookingRef(booking.id),
+      bookingId: booking.id,
       status: booking.status,
       checkInDate: booking.checkInDate,
       checkOutDate: booking.checkOutDate,
@@ -160,7 +160,7 @@ class SecurityUtils {
 
     // Base booking info
     const sanitized: any = {
-      bookingRef: this.generatePublicBookingRef(booking.id),
+      bookingId: booking.id,
       status: booking.status,
       checkInDate: booking.checkInDate,
       checkOutDate: booking.checkOutDate,
