@@ -44,7 +44,7 @@ export const vendorRegistrationSchema = z.object({
   businessAddress: z
     .string()
     .min(10, "Business address must be at least 10 characters"),
-  googleMapsLink: z.string().url("Invalid Google Maps link"),
+  googleMapsLink: z.string().url("Invalid Google Maps link").optional(),
   gstNumber: z
     .string()
     .min(3, "GST number must be at least 3 characters")

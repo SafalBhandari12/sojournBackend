@@ -602,25 +602,31 @@ class AuthController {
         });
       }
 
-      // Create vendor profile
-      const vendor = await prisma.vendor.create({
-        data: {
-          userId: req.user.userId,
-          businessName,
-          ownerName,
-          contactNumbers,
-          email,
-          businessAddress,
-          googleMapsLink,
-          gstNumber,
-          panNumber,
-          aadhaarNumber,
-          vendorType,
-          status: "PENDING",
-          bankDetails: {
-            create: bankDetails,
-          },
+      // Create vendor profile data with conditional googleMapsLink
+      const vendorData: any = {
+        userId: req.user.userId,
+        businessName,
+        ownerName,
+        contactNumbers,
+        email,
+        businessAddress,
+        gstNumber,
+        panNumber,
+        aadhaarNumber,
+        vendorType,
+        status: "PENDING",
+        bankDetails: {
+          create: bankDetails,
         },
+      };
+
+      // Only include googleMapsLink if it's provided
+      if (googleMapsLink) {
+        vendorData.googleMapsLink = googleMapsLink;
+      }
+
+      const vendor = await prisma.vendor.create({
+        data: vendorData,
         include: {
           bankDetails: true,
           user: {

@@ -191,7 +191,7 @@ model Vendor {
   contactNumbers   String[] // Array of phone numbers
   email            String
   businessAddress  String
-  googleMapsLink   String
+  googleMapsLink   String?
   gstNumber        String
   panNumber        String
   aadhaarNumber    String
