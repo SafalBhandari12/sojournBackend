@@ -620,8 +620,8 @@ class AuthController {
         },
       };
 
-      // Only include googleMapsLink if it's provided
-      if (googleMapsLink) {
+      // Only include googleMapsLink if it's provided and not empty
+      if (googleMapsLink && googleMapsLink.trim() !== "") {
         vendorData.googleMapsLink = googleMapsLink;
       }
 
