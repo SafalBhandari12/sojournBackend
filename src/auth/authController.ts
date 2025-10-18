@@ -80,7 +80,7 @@ class AuthController {
 
         // Create a fake OTP record with a dummy verification ID
         const fakeVerificationId = `dummy_${Date.now()}_${phoneNumber}`;
-        const timeout = 300; // 5 minutes
+        const timeout = 60; // 1 minute
 
         await createOTPRecord(
           user.id,
@@ -382,7 +382,7 @@ class AuthController {
       if (dummyPhoneNumbers.includes(phoneNumber)) {
         // Create a fake OTP record with a dummy verification ID
         const fakeVerificationId = `dummy_${Date.now()}_${phoneNumber}`;
-        const timeout = 300; // 5 minutes
+        const timeout = 60; // 1 minute
 
         await createOTPRecord(
           existingUser.id,

@@ -228,11 +228,11 @@ export const generalRateLimit = rateLimit({
 });
 
 /**
- * OTP rate limiter - 5 OTP requests per 15 minutes per IP
+ * OTP rate limiter - 15 OTP requests per 15 minutes per IP
  */
 export const otpRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // Limit each IP to 5 OTP requests per windowMs
+  max: 15, // Limit each IP to 15 OTP requests per windowMs
   message: {
     success: false,
     message: "Too many OTP requests. Please wait before requesting again.",
