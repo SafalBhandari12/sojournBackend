@@ -1232,12 +1232,49 @@ export class HotelController {
       }
 
       if (location) {
+        const locationString = location as string;
+
+        // Create more specific location filtering
+        // Look for the location as a word boundary to avoid partial matches
         where.vendor = {
           ...where.vendor,
-          businessAddress: {
-            contains: location as string,
-            mode: "insensitive",
-          },
+          OR: [
+            // Exact match for city/state names
+            {
+              businessAddress: {
+                contains: `, ${locationString}`,
+                mode: "insensitive",
+              },
+            },
+            // Match at the beginning of address
+            {
+              businessAddress: {
+                startsWith: locationString,
+                mode: "insensitive",
+              },
+            },
+            // Match as a standalone word (with spaces around)
+            {
+              businessAddress: {
+                contains: ` ${locationString} `,
+                mode: "insensitive",
+              },
+            },
+            // Match at the end of address (for cases like "District Kashmir")
+            {
+              businessAddress: {
+                endsWith: ` ${locationString}`,
+                mode: "insensitive",
+              },
+            },
+            // Match the entire address for single word locations
+            {
+              businessAddress: {
+                equals: locationString,
+                mode: "insensitive",
+              },
+            },
+          ],
         };
       }
 
