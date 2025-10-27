@@ -1294,6 +1294,7 @@ export class HotelController {
             select: {
               businessName: true,
               businessAddress: true,
+              googleMapsLink: true,
               images: {
                 where: { imageType: "property" },
                 take: 5,
@@ -1370,6 +1371,7 @@ export class HotelController {
               businessAddress: true,
               contactNumbers: true,
               email: true,
+              googleMapsLink: true,
               images: true,
             },
           },
